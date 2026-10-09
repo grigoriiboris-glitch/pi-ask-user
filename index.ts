@@ -2722,8 +2722,17 @@ async function executeBatch(
       const suggestions = await Promise.all(questions.map((item) =>
          requestDecision(item.question, item.context, item.options, item.allowMultiple, item.allowFreeform, settings.allowComment, signal),
       ));
-      historyIds = await Promise.all(suggestions.map((suggestion, index) => suggestion
-         ? recordDecision({ mode: decisionMode, model: process.env.PI_DECISION_MODEL?.trim() || "unknown", question: questions[index]!.question, context: questions[index]!.context, options: questions[index]!.options.map((option) => option.title), suggestion: formatResponseSummary(suggestion.response), confidence: suggestion.confidence, reason: suggestion.reason })
+      historyIds = await Promise.all(suggestions.map((suggestion, index) => suggestion || decisionMode === "auto"
+         ? recordDecision({
+            mode: decisionMode,
+            model: process.env.PI_DECISION_MODEL?.trim() || "unknown",
+            question: questions[index]!.question,
+            context: questions[index]!.context,
+            options: questions[index]!.options.map((option) => option.title),
+            suggestion: suggestion ? formatResponseSummary(suggestion.response) : "NEEDS_HUMAN",
+            confidence: suggestion?.confidence ?? 0,
+            reason: suggestion?.reason || "No confident AI suggestion; human decision required",
+         })
          : Promise.resolve(null)));
       if (decisionMode === "auto") {
          for (let index = 0; index < questions.length; index++) {
@@ -2735,7 +2744,9 @@ async function executeBatch(
             if (!response) {
                const human = await requestTelegramDecision({
                   question: item.question,
-                  context: item.context,
+                  context: [item.context, suggestion
+                     ? `AI suggestion: ${formatResponseSummary(suggestion.response)} (confidence ${suggestion.confidence.toFixed(2)}). ${suggestion.reason}`
+                     : "The decision model could not make a confident choice."].filter(Boolean).join("\n\n"),
                   options: item.options.map((option) => ({ title: option.title, description: option.description })),
                   allowMultiple: item.allowMultiple,
                   allowFreeform: item.allowFreeform,
@@ -3201,7 +3212,18 @@ export default function(pi: ExtensionAPI) {
          let decisionHistoryId: string | null = null;
          if (decisionMode !== "off") {
             const suggestion = await requestDecision(question, normalizedContext, options, allowMultiple, allowFreeform, allowComment, signal);
-            if (suggestion) decisionHistoryId = await recordDecision({ mode: decisionMode, model: process.env.PI_DECISION_MODEL?.trim() || "unknown", question, context: normalizedContext, options: options.map((option) => option.title), suggestion: formatResponseSummary(suggestion.response), confidence: suggestion.confidence, reason: suggestion.reason });
+            if (suggestion || decisionMode === "auto") {
+               decisionHistoryId = await recordDecision({
+                  mode: decisionMode,
+                  model: process.env.PI_DECISION_MODEL?.trim() || "unknown",
+                  question,
+                  context: normalizedContext,
+                  options: options.map((option) => option.title),
+                  suggestion: suggestion ? formatResponseSummary(suggestion.response) : "NEEDS_HUMAN",
+                  confidence: suggestion?.confidence ?? 0,
+                  reason: suggestion?.reason || "No confident AI suggestion; human decision required",
+               });
+            }
             if (decisionMode === "auto" && suggestion && suggestion.confidence >= getDecisionThreshold()) {
                const response = suggestion.response;
                if (decisionHistoryId) await recordActual(decisionHistoryId, formatResponseSummary(response));
@@ -3215,7 +3237,9 @@ export default function(pi: ExtensionAPI) {
             if (decisionMode === "auto" && (!suggestion || suggestion.confidence < getDecisionThreshold())) {
                const human = await requestTelegramDecision({
                   question,
-                  context: normalizedContext,
+                  context: [normalizedContext, suggestion
+                     ? `AI suggestion: ${formatResponseSummary(suggestion.response)} (confidence ${suggestion.confidence.toFixed(2)}). ${suggestion.reason}`
+                     : "The decision model could not make a confident choice."].filter(Boolean).join("\n\n"),
                   options: options.map((option) => ({ title: option.title, description: option.description })),
                   allowMultiple,
                   allowFreeform,
