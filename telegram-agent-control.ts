@@ -130,7 +130,8 @@ async function runNext(db: DatabaseSync, chat: number): Promise<void> {
     ? t.prompt
     : ROLES[t.profile as Exclude<Profile, "project">] + "\n\nTask:\n" + t.prompt + "\n\nDo not expose secrets or run destructive commands. Stay within the selected project; if a risky action is needed, stop and report it.";
   let output = "", settled = false;
-  const proc = spawn(process.env.PI_ASK_USER_CONTROL_PI_BIN?.trim() || "pi", ["--print", prompt], { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"], env: process.env });
+  const hasSession = (db.prepare("SELECT value FROM settings WHERE key=?").get("session_started:" + t.project) as any)?.value === "1";
+  const proc = spawn(process.env.PI_ASK_USER_CONTROL_PI_BIN?.trim() || "pi", [...(hasSession ? ["--continue"] : []), "--print", prompt], { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"], env: process.env });
   child = proc;
   const collect = (chunk: Buffer) => { output = short(output + chunk.toString("utf8"), 50000); };
   proc.stdout?.on("data", collect); proc.stderr?.on("data", collect);
@@ -139,6 +140,7 @@ async function runNext(db: DatabaseSync, chat: number): Promise<void> {
     const current = db.prepare("SELECT status FROM tasks WHERE id=?").get(t.id) as any;
     const status = current?.status === "cancelled" ? "cancelled" : failed || code !== 0 ? "failed" : "completed";
     update(db, t.id, status, output, code);
+    if (status === "completed") db.prepare("INSERT INTO settings(key,value) VALUES(?, '1') ON CONFLICT(key) DO UPDATE SET value='1'").run("session_started:" + t.project);
     await send(chat, (status === "completed" ? "✅" : status === "cancelled" ? "⏹" : "❌") + " Задача #" + t.id + ": " + status + " (exit " + code + ")\n\n" + (output || "(нет текстового вывода)"));
     child = undefined; activeId = undefined; void runNext(db, chat);
   };
