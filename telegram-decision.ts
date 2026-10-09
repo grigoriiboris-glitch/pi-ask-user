@@ -162,6 +162,63 @@ function configuredTimeout(): number {
   return Number.isFinite(parsed) ? Math.max(1000, Math.min(3600000, parsed)) : 300000;
 }
 
+
+export interface TelegramDecisionAudit {
+  question: string;
+  context?: string;
+  options: string[];
+  model: string;
+  mode: "ask" | "auto";
+  suggestion: string;
+  confidence: number;
+  reason: string;
+  threshold: number;
+}
+
+/** Stable, testable audit message; confidence is always shown as a percentage. */
+export function formatDecisionAudit(input: TelegramDecisionAudit): string {
+  const confidence = Number.isFinite(input.confidence)
+    ? Math.round(Math.max(0, Math.min(1, input.confidence)) * 100)
+    : 0;
+  const threshold = Math.round(Math.max(0, Math.min(1, input.threshold)) * 100);
+  const automatic = input.mode === "auto" && confidence >= threshold;
+  return [
+    "📊 Решение ИИ · анализ",
+    `Режим: ${input.mode === "auto" ? "авто" : "предложение"}`,
+    `Уверенность: ${confidence}%`,
+    `Порог автоответа: ${threshold}%`,
+    `Статус: ${automatic ? "применено автоматически" : "требуется/ожидается проверка"}`,
+    `Вопрос: ${input.question}`,
+    input.context ? `Контекст: ${input.context}` : "",
+    `Решение ИИ: ${input.suggestion}`,
+    input.reason ? `Обоснование: ${input.reason}` : "",
+    input.options.length ? `Варианты: ${input.options.join(" | ")}` : "",
+    `Модель: ${input.model}`,
+  ].filter(Boolean).join("\n\n").slice(0, 3900);
+}
+
+/**
+ * Sends a read-only audit entry to Telegram. Like all other Bot API calls,
+ * this is forced through the configured SOCKS5 proxy and never blocks decisions.
+ */
+export async function notifyTelegramDecision(input: TelegramDecisionAudit): Promise<void> {
+  const token = process.env.PI_ASK_USER_TELEGRAM_BOT_TOKEN?.trim();
+  const chatText = process.env.PI_ASK_USER_TELEGRAM_CHAT_ID?.trim();
+  if (!token || !chatText) return;
+  const chatId = Number(chatText);
+  if (!Number.isSafeInteger(chatId)) return;
+  const proxyUrl = process.env.PI_ASK_USER_TELEGRAM_PROXY?.trim() || "socks5h://127.0.0.1:2080";
+  try {
+    await telegramCall(token, "sendMessage", {
+      chat_id: chatId,
+      text: formatDecisionAudit(input),
+      disable_web_page_preview: true,
+    }, proxyUrl, 10000);
+  } catch {
+    // Audit delivery must never break ask_user or silently bypass the proxy.
+  }
+}
+
 /**
  * Sends an uncertain decision to a configured Telegram chat. All Bot API
  * traffic goes through the configured SOCKS5 proxy (2080 by default).
