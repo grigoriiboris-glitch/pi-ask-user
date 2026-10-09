@@ -38,6 +38,7 @@
     "single-select-layout.ts",
     "decision-history.ts",
     "telegram-decision.ts",
+    "telegram-agent-control.ts",
     "skills",
     "README.md",
     "LICENSE"
