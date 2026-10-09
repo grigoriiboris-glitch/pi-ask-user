@@ -181,7 +181,7 @@ Oversized context collapses behind a one-line summary so the question and choice
 
 ### Telegram human fallback for uncertain decisions
 
-When decision mode is `auto`, the decision model answers only when its confidence meets `PI_ASK_USER_DECISION_THRESHOLD` (default `0.85`). If confidence is lower or the model says it needs a human, `ask_user` sends the question and inline answer buttons to Telegram, then returns your choice to the agent. Batch questions use Telegram only for unresolved items; remaining questions fall back to Pi's local UI.
+Auto-answer is off by default; use `/decision toggle` to enable or disable it. When decision mode is `auto`, the decision model answers only when its confidence meets `PI_ASK_USER_DECISION_THRESHOLD` (default `0.85`). If confidence is lower or the model says it needs a human, `ask_user` sends the question and inline answer buttons to Telegram, then returns your choice to the agent. Batch questions use Telegram only for unresolved items; remaining questions fall back to Pi's local UI.
 
 Create a Telegram bot with BotFather, open a chat with it, and configure the environment in the same shell that launches Pi:
 
