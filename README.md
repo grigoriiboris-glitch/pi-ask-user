@@ -283,7 +283,7 @@ See [CHANGELOG.md](https://github.com/edlsh/pi-ask-user/blob/main/CHANGELOG.md).
 
 ## Automatic decisions for `ask_user` (fork feature)
 
-This fork can optionally ask a separate OpenAI-compatible decision model to choose among the offered options. It only applies to single-question, single-select prompts with at least two options; freeform questions, multi-select, optional-comment prompts, and batches remain interactive.
+This fork can optionally ask a separate OpenAI-compatible decision model to answer `ask_user` prompts. It supports single questions, multi-select, freeform answers when enabled, optional comments, and batches of 2-4 questions. For a batch in `auto` mode, every answer must validate and meet the confidence threshold; otherwise the entire batch stays interactive so the model never silently submits a partial batch.
 
 ### Configuration
 
@@ -304,7 +304,7 @@ The default mode is `off`. The decision endpoint must accept an OpenAI-compatibl
 - `/decision status` — show current mode and whether a model is configured.
 - `/decision off` — keep all prompts manual.
 - `/decision ask` — show the model's suggestion, then keep the normal prompt for manual selection.
-- `/decision auto` — automatically select a valid option only when confidence meets the configured threshold (default `0.85`).
+- `/decision auto` — automatically submit a validated selection, multi-selection, or allowed freeform answer only when confidence meets the configured threshold (default `0.85`). For batches, every answer must pass validation and threshold checks.
 
-Commands change the mode for the current Pi process only. Use `PI_ASK_USER_DECISION_MODE` for the startup default. If the provider is unavailable, returns invalid JSON, chooses an unknown option, returns `NEEDS_HUMAN`, or falls below the threshold, the normal manual prompt is shown. Requests time out after 10 seconds. The model receives only the current question, its supplied context, the available options, and short fixed constraints—not the full Pi conversation.
+Commands change the mode for the current Pi process only. Use `PI_ASK_USER_DECISION_MODE` for the startup default. If the provider is unavailable, returns invalid JSON, proposes invalid choices, returns `NEEDS_HUMAN`, or falls below the threshold, the normal manual prompt is shown. Requests time out after 10 seconds. Multi-select answers are checked against exact option titles and the `allowMultiple` setting; freeform answers are accepted only when `allowFreeform` is enabled. The model receives only the current question(s), supplied context, available options, and short fixed constraints—not the full Pi conversation.
 
