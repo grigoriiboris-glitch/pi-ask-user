@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { inferProfile, parseNewCommand, parseSessionCommand } from "./telegram-agent-control";
+import { inferProfile, parseNewCommand, parseSessionCommand, parseVerifyCommand } from "./telegram-agent-control";
 
-describe("Telegram session command parsing", () => {
+describe("Telegram verification command parsing", () => {\n  test("accepts a valid task ID", () => { expect(parseVerifyCommand("/verify abcd1234")).toBe("abcd1234"); });\n  test("rejects malformed verification commands", () => { expect(parseVerifyCommand("/verify")).toBeNull(); expect(parseVerifyCommand("/verify bad id")).toBeNull(); expect(parseVerifyCommand("/verify ab")).toBeNull(); });\n});\n\ndescribe("Telegram session command parsing", () => {
   test("normalizes a named session", () => {
     expect(parseSessionCommand("/session Feature Work")).toEqual({ name: "Feature Work", slug: "feature-work" });
   });
