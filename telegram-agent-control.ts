@@ -175,15 +175,17 @@ async function textCommand(db: DatabaseSync, chat: number, text: string): Promis
     return void await send(chat, Number(res.changes) ? "Задача #" + id + " отменена." : "Активную или неизвестную задачу отменить не удалось.");
   }
   const parsed = parseNewCommand(cmd);
+  let openingSession = false;
   const taskCmd = cmd.match(/^\/task\s+([\s\S]+)$/i);
   const skillCmd = cmd.match(/^\/skill\s+([^\s]+)(?:\s+([\s\S]+))?$/i);
   if (!parsed && !taskCmd && !skillCmd) return void await send(chat, "Формат: /new <проект> [роль] <задача>, /task <задача> или /skill <имя> [задача].");
   if (parsed) {
     const selected = (await projects()).find(p => p.id === parsed.project);
     if (!selected) return void await send(chat, "Проект не найден в разрешённом списке. Выполни /projects.");
+    db.prepare("INSERT INTO settings(key,value) VALUES('active_project',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(selected.id);
     if (!parsed.task) {
-      db.prepare("INSERT INTO settings(key,value) VALUES('active_project',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(selected.id);
-      return void await send(chat, "📂 Выбран проект: " + selected.id + "\n" + selected.path + "\nАгент пока не запущен. Отправь /task <задача> или /skill <имя> [задача].");
+      openingSession = true;
+      parsed.task = "Initialize a persistent Pi session for this project. Read its local agent instructions and enough project structure to understand the repository. Do not edit files or run tests. Reply that the session is ready for my next instruction.";
     }
   }
   let projectId = parsed?.project;
@@ -208,7 +210,7 @@ async function textCommand(db: DatabaseSync, chat: number, text: string): Promis
   if (parsed && parsed.task) profile = parsed.profile === "auto" ? inferProfile(parsed.task) : parsed.profile;
   const id = randomUUID().slice(0, 8), ts = now();
   db.prepare("INSERT INTO tasks(id,project,project_path,profile,prompt,status,created_at,updated_at) VALUES(?,?,?,?,?,'awaiting_confirmation',?,?)").run(id, project.id, project.path, profile, task, ts, ts);
-  await send(chat, "🧭 План задачи #" + id + "\nПроект: " + project.id + "\nРежим: " + (skillCmd ? "навык " + skillCmd[1] : profile) + "\nЗадача: " + short(task, 1000) + "\n\nПосле подтверждения задача попадёт в очередь и запустится локально. До подтверждения Pi не запускается.", keyboard(id));
+  await send(chat, "🧭 План задачи #" + id + "\nПроект: " + project.id + "\nРежим: " + (openingSession ? "открыть сессию" : skillCmd ? "навык " + skillCmd[1] : profile) + "\nЗадача: " + (openingSession ? "Подготовить контекст проекта без изменений файлов." : short(task, 1000)) + "\n\nПосле подтверждения задача попадёт в очередь и запустится локально. До подтверждения Pi не запускается.", keyboard(id));
 }
 async function callback(db: DatabaseSync, chat: number, query: any): Promise<void> {
   await telegramControlApi("answerCallbackQuery", { callback_query_id: query.id }).catch(() => undefined);
