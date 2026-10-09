@@ -348,9 +348,9 @@ Commands:
 Ratings are human assessments, not proof of objective correctness. Unrated and \`unsure\` decisions are excluded from accuracy. History-write failures do not interrupt asking the user.
 
 
-## Control local Pi agents through Telegram
+## Control local Pi agents through Telegram or VK
 
-The optional controller runs inside the local Pi extension process; Pi and the target repositories stay on your computer. It uses a **separate Telegram bot** from the `ask_user` decision bot, avoiding competing Telegram `getUpdates` pollers. Both use the configured SOCKS5 proxy.
+The optional controller runs inside the local Pi extension process; Pi and the target repositories stay on your computer. Choose one control transport with `PI_ASK_USER_CONTROL_PLATFORM=telegram` (default) or `PI_ASK_USER_CONTROL_PLATFORM=vk`. The controller shares the same local SQLite task queue, project allowlist, decision journal, ratings, verification flow, and confirmation gate. The existing Telegram decision bot for `ask_user` human fallback remains separate. Telegram uses the configured SOCKS5 proxy; VK uses outbound HTTPS and VK Community Long Poll. No public IP, webhook, Docker, or inbound port is needed.
 
 Create a second bot with BotFather, then configure these variables in the shell that starts Pi:
 
@@ -367,6 +367,21 @@ export PI_ASK_USER_TELEGRAM_PROXY="socks5h://127.0.0.1:2080"
 ```
 
 The controller refuses to start without a valid chat ID and explicit user-ID allowlist. Keep the bot token secret.
+
+### Use VK instead of Telegram
+
+Create a VK community, enable community messages, enable the **Community Messages Long Poll API**, and subscribe to the `message_new` and `message_event` events. Create a community access token with message permissions. Set the following variables in the same shell that launches Pi (do not set the Telegram control token at the same time unless you intend to switch transports):
+
+```bash
+export PI_ASK_USER_CONTROL_PLATFORM=vk
+export PI_ASK_USER_CONTROL_VK_TOKEN="your-community-access-token"
+export PI_ASK_USER_CONTROL_VK_GROUP_ID="123456789" # numeric community ID, without a minus sign
+export PI_ASK_USER_CONTROL_VK_USER_ID="123456789"  # your numeric VK user ID; required allowlist
+# Optional: VK peer ID for the private conversation; defaults to the allowed user ID
+export PI_ASK_USER_CONTROL_VK_PEER_ID="123456789"
+```
+
+Open the community's messages and send `/start`. VK inline callback buttons handle task confirmation and rejection. All commands, sequential local execution, status/logs, decision ratings, and read-only `/verify` checks use the same controller logic as Telegram. The local process makes outbound requests to VK, so keep Pi running while you want the bot available. Never commit the community token. Set `PI_ASK_USER_CONTROL_PLATFORM=telegram` or unset it to use the existing Telegram configuration.
 
 Create `~/.pi/agent/telegram-control/projects.json` with absolute paths for projects you explicitly allow:
 
@@ -393,7 +408,7 @@ Only project IDs in this file can be selected. Paths are canonicalized before ex
 - `/skill skill-name [task]` — load and follow a matching `SKILL.md`; omit the task to let the skill start its own workflow.
 - `/tasks` and `/status` — inspect recent tasks and current execution.
 - `/logs <id>` — read saved output and exit code for a task.
-- `/cancel <id>` — cancel a queued task or send SIGTERM to the active Pi process.\n- `/decisions`, `/decision <id>`, `/review-decisions`, `/rate-decision <id> correct|incorrect|unsure` — review the local AI decision journal and rate decisions from Telegram.\n- `/verify <id>` — queue an independent, read-only verification of a completed/failed task. It requires the usual explicit confirmation and checks the actual diff, available tests, and UI behavior when relevant.
+- `/cancel <id>` — cancel a queued task or send SIGTERM to the active Pi process.\n- `/decisions`, `/decision <id>`, `/review-decisions`, `/rate-decision <id> correct|incorrect|unsure` — review the local AI decision journal and rate decisions from the selected control chat.\n- `/verify <id>` — queue an independent, read-only verification of a completed/failed task. It requires the usual explicit confirmation and checks the actual diff, available tests, and UI behavior when relevant.
 
 Every task first appears as a plan with **Confirm** and **Reject** buttons. Only an explicit confirmation enters the sequential SQLite queue and starts Pi in the selected project directory. Each project/session pair has a separate Pi session directory, so `--continue` resumes the selected session rather than whichever session happened to be most recent in the project. For implementation/review/test tasks, Pi must report changed files and exact checks/results, distinguish evidence from assumptions, and disclose checks it could not run. UI tasks should verify rendered behavior where possible, including modal layering and visible, unclipped dropdowns. A successful process exit is not proof that the feature works: completed tasks are labelled as not independently verified, and `/verify <id>` queues a read-only verification task with explicit confirmation. Task text is never executed as a shell command. Task states and output are stored in `~/.pi/agent/telegram-control/tasks.sqlite`; interrupted tasks are marked failed on restart rather than automatically re-run, because they may already have changed files. Inspect the project before retrying.
 
