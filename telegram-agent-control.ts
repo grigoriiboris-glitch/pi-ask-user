@@ -9,7 +9,7 @@ import { telegramControlApi } from "./telegram-decision";
 
 type Profile = "project" | "developer" | "reviewer" | "tester" | "debugger";
 type Project = { id: string; path: string; description?: string };
-const ROLES: Record<Profile, string> = {
+const ROLES: Record<Exclude<Profile, "project">, string> = {
   developer: "Implement the request with the smallest correct change and run relevant tests.",
   reviewer: "Review code only. Report concrete bugs, regressions, security issues, and missing tests with file/line references. Do not edit files.",
   tester: "Test the requested behavior and report reproducible results. Do not modify application code.",
