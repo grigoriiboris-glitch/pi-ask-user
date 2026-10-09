@@ -182,18 +182,19 @@ export function formatDecisionAudit(input: TelegramDecisionAudit): string {
     : 0;
   const threshold = Math.round(Math.max(0, Math.min(1, input.threshold)) * 100);
   const automatic = input.mode === "auto" && confidence >= threshold;
+  const clip = (value: string, max: number) => value.length > max ? value.slice(0, max - 1) + "…" : value;
   return [
     "📊 Решение ИИ · анализ",
     `Режим: ${input.mode === "auto" ? "авто" : "предложение"}`,
     `Уверенность: ${confidence}%`,
     `Порог автоответа: ${threshold}%`,
     `Статус: ${automatic ? "применено автоматически" : "требуется/ожидается проверка"}`,
-    `Вопрос: ${input.question}`,
-    input.context ? `Контекст: ${input.context}` : "",
-    `Решение ИИ: ${input.suggestion}`,
-    input.reason ? `Обоснование: ${input.reason}` : "",
-    input.options.length ? `Варианты: ${input.options.join(" | ")}` : "",
-    `Модель: ${input.model}`,
+    `Вопрос: ${clip(input.question, 700)}`,
+    `Решение ИИ: ${clip(input.suggestion, 600)}`,
+    input.reason ? `Обоснование: ${clip(input.reason, 600)}` : "",
+    input.context ? `Контекст: ${clip(input.context, 700)}` : "",
+    input.options.length ? `Варианты: ${clip(input.options.join(" | "), 800)}` : "",
+    `Модель: ${clip(input.model, 150)}`,
   ].filter(Boolean).join("\n\n").slice(0, 3900);
 }
 
