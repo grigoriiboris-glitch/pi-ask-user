@@ -2715,11 +2715,12 @@ async function executeBatch(
    });
 
    const decisionMode = getDecisionMode();
+   let historyIds: Array<string | null> = [];
    if (decisionMode !== "off") {
       const suggestions = await Promise.all(questions.map((item) =>
          requestDecision(item.question, item.context, item.options, item.allowMultiple, item.allowFreeform, settings.allowComment, signal),
       ));
-      const historyIds = await Promise.all(suggestions.map((suggestion, index) => suggestion
+      historyIds = await Promise.all(suggestions.map((suggestion, index) => suggestion
          ? recordDecision({ mode: decisionMode, model: process.env.PI_DECISION_MODEL?.trim() || "unknown", question: questions[index]!.question, context: questions[index]!.context, options: questions[index]!.options.map((option) => option.title), suggestion: formatResponseSummary(suggestion.response), confidence: suggestion.confidence, reason: suggestion.reason })
          : Promise.resolve(null)));
       if (decisionMode === "auto" && suggestions.every((item) => item && item.confidence >= getDecisionThreshold())) {
@@ -2785,6 +2786,12 @@ async function executeBatch(
    }
 
    // Skipped questions emit nothing; each answered one emits its usual event.
+   await Promise.all(historyIds.map((id, index) => {
+      const answer = answers![index];
+      return id && answer?.status === "answered"
+         ? recordActual(id, formatResponseSummary(answer.response))
+         : Promise.resolve();
+   }));
    answers.forEach((answer, index) => {
       if (answer.status === "answered") {
          events.answered(subjects[index]!, answer.response, { index, total: subjects.length });
