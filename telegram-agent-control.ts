@@ -1,4 +1,4 @@
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, readFile, realpath } from "node:fs/promises";
 import { chmodSync } from "node:fs";
@@ -45,7 +45,8 @@ async function projects(): Promise<Project[]> {
   }
   return result;
 }
-function dbOpen(): DatabaseSync {
+async function dbOpen(): Promise<DatabaseSync> {
+  const { DatabaseSync } = await import("node:sqlite");
   const path = join(root(), "tasks.sqlite");
   const db = new DatabaseSync(path);
   try { chmodSync(path, 0o600); } catch {}
@@ -143,7 +144,7 @@ export function startTelegramAgentControl(): void {
   void (async () => {
     await mkdir(root(), { recursive: true, mode: 0o700 });
     try { await (await import("node:fs/promises")).chmod(root(), 0o700); } catch {}
-    const db = dbOpen();
+    const db = await dbOpen();
     db.prepare("UPDATE tasks SET status='failed',output='Pi exited or restarted before the task result was saved; inspect the project before retrying.',updated_at=? WHERE status='running'").run(now());
     let offset = Number((db.prepare("SELECT value FROM settings WHERE key='telegram_offset'").get() as any)?.value ?? 0);
     while (true) {
