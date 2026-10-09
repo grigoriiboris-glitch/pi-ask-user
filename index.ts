@@ -2817,6 +2817,76 @@ function formatBatchResult(theme: Theme, details: AskBatchDetails, expanded: boo
    return text;
 }
 
+
+type DecisionMode = "off" | "ask" | "auto";
+type DecisionSuggestion = { option: string; confidence: number; reason: string };
+
+function getDecisionMode(): DecisionMode {
+   const value = process.env.PI_ASK_USER_DECISION_MODE?.trim().toLowerCase();
+   return value === "auto" || value === "ask" ? value : "off";
+}
+
+function getDecisionThreshold(): number {
+   const parsed = Number(process.env.PI_ASK_USER_DECISION_THRESHOLD ?? "0.85");
+   return Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : 0.85;
+}
+
+async function requestDecision(
+   question: string,
+   context: string | undefined,
+   options: QuestionOption[],
+   signal?: AbortSignal,
+): Promise<DecisionSuggestion | null> {
+   const endpoint = process.env.PI_DECISION_API_URL?.trim();
+   const apiKey = process.env.PI_DECISION_API_KEY?.trim();
+   const model = process.env.PI_DECISION_MODEL?.trim();
+   if (!endpoint || !apiKey || !model || options.length < 2) return null;
+
+   const controller = new AbortController();
+   const timeout = setTimeout(() => controller.abort(), 10000);
+   const forwardAbort = () => controller.abort();
+   signal?.addEventListener("abort", forwardAbort, { once: true });
+   try {
+      const response = await fetch(endpoint, {
+         method: "POST",
+         headers: { "content-type": "application/json", authorization: "Bearer " + apiKey },
+         body: JSON.stringify({
+            model,
+            temperature: 0,
+            max_tokens: 300,
+            response_format: { type: "json_object" },
+            messages: [
+               { role: "system", content: "You are a decision-only assistant for a coding agent. Choose exactly one offered option based on the question, context, task requirements, and minimal-change principle. Never invent an option. If no option is safe or supported, return option NEEDS_HUMAN with confidence 0. Return JSON only with keys option (exact offered title or NEEDS_HUMAN), confidence (0 to 1), and reason (short string)." },
+               { role: "user", content: JSON.stringify({
+                  question,
+                  context: context ?? "",
+                  constraints: ["Follow the task specification", "Preserve existing architecture", "Prefer minimal changes", "Avoid over-engineering"],
+                  options: options.map((option) => ({ title: option.title, description: option.description ?? "" })),
+               }) },
+            ],
+         }),
+         signal: controller.signal,
+      });
+      if (!response.ok) return null;
+      const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+      const content = payload.choices?.[0]?.message?.content;
+      if (typeof content !== "string") return null;
+      const parsed = JSON.parse(content) as Partial<DecisionSuggestion>;
+      if (typeof parsed.option !== "string" || typeof parsed.confidence !== "number" || !Number.isFinite(parsed.confidence)) return null;
+      if (parsed.option !== "NEEDS_HUMAN" && !options.some((option) => option.title === parsed.option)) return null;
+      return {
+         option: parsed.option,
+         confidence: Math.max(0, Math.min(1, parsed.confidence)),
+         reason: typeof parsed.reason === "string" ? parsed.reason.slice(0, 500) : "",
+      };
+   } catch {
+      return null;
+   } finally {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", forwardAbort);
+   }
+}
+
 export default function(pi: ExtensionAPI) {
    // Flat object shape: union item schemas get stripped or rejected
    // by several providers/proxies (Google function calling,
@@ -2833,6 +2903,23 @@ export default function(pi: ExtensionAPI) {
    // Asks the user, so only the model may call it; codemode scripts cannot open prompts. Pi types `exposure` from
    // 1.0 and older hosts ignore it, so it is spread in to keep the definition valid against every supported host.
    const modelOnly: Record<string, unknown> = { exposure: "model-only" };
+
+   pi.registerCommand("decision", {
+      description: "Configure ask_user decision mode: auto, ask, off, status",
+      handler: async (args, ctx) => {
+         const value = args.trim().toLowerCase();
+         if (value === "status" || !value) {
+            ctx.ui.notify("ask_user decision mode: " + getDecisionMode() + "; threshold: " + getDecisionThreshold().toFixed(2) + "; model: " + (process.env.PI_DECISION_MODEL ? "configured" : "not configured"), "info");
+            return;
+         }
+         if (value !== "auto" && value !== "ask" && value !== "off") {
+            ctx.ui.notify("Usage: /decision auto|ask|off|status. Persist mode with PI_ASK_USER_DECISION_MODE.", "warning");
+            return;
+         }
+         ctx.ui.notify("Set PI_ASK_USER_DECISION_MODE=" + value + " in the environment and restart Pi. This command reports the setting but does not persist environment changes.", "info");
+      },
+   });
+
    pi.registerTool({
       ...modelOnly,
       name: "ask_user",
@@ -2977,6 +3064,24 @@ export default function(pi: ExtensionAPI) {
                + `Each option must be a plain string or an object like { "title": "Short label", "description": "Optional detail" }. `
                + `Call ask_user again with corrected options.`,
             );
+         }
+
+
+         const decisionMode = getDecisionMode();
+         if (decisionMode !== "off" && options.length > 1 && !allowMultiple && !allowComment) {
+            const suggestion = await requestDecision(question, normalizedContext, options, signal);
+            const selected = suggestion && options.find((option) => option.title === suggestion.option);
+            if (decisionMode === "auto" && selected && suggestion.confidence >= getDecisionThreshold()) {
+               const response: AskResponse = { kind: "selection", selections: [selected.title] };
+               events.answered(subject, response);
+               return {
+                  content: [{ type: "text", text: "Decision model selected: " + selected.title + " (confidence " + suggestion.confidence.toFixed(2) + "). Reason: " + (suggestion.reason || "not provided") }],
+                  details: { question, context: normalizedContext, options, response, cancelled: false } as AskToolDetails,
+               };
+            }
+            if (decisionMode === "ask" && suggestion && suggestion.option !== "NEEDS_HUMAN") {
+               ctx.ui.notify("Decision suggestion: " + suggestion.option + " (" + Math.round(suggestion.confidence * 100) + "%). " + suggestion.reason, "info");
+            }
          }
 
          if (!ctx.hasUI || !ctx.ui) {
