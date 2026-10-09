@@ -109,7 +109,7 @@ async function textCommand(db: DatabaseSync, chat: number, text: string): Promis
     const rows = db.prepare("SELECT id,project,profile,status,prompt FROM tasks ORDER BY created_at DESC LIMIT 10").all() as any[];
     return void await send(chat, rows.length ? rows.map(t => "#" + t.id + " [" + t.status + "] " + t.project + "/" + t.profile + "\n" + t.prompt).join("\n\n") : "Задач пока нет.");
   }
-  const logs = cmd.match(/^\\/logs\\s+([a-f0-9-]{4,40})$/i);
+  const logs = cmd.match(/^\/logs\s+([a-f0-9-]{4,40})$/i);
   if (logs) {
     const t = db.prepare("SELECT status,output,exit_code FROM tasks WHERE id=?").get(logs[1]!) as any;
     return void await send(chat, t ? "Задача #" + logs[1] + " [" + t.status + "] exit=" + (t.exit_code ?? "n/a") + "\n\n" + (t.output || "(вывод пока отсутствует)") : "Задача не найдена.");
