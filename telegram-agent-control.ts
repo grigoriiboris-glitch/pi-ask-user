@@ -1,8 +1,9 @@
 import { DatabaseSync } from "node:sqlite";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, readFile, realpath } from "node:fs/promises";
+import { chmodSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { telegramControlApi } from "./telegram-decision";
 
@@ -45,7 +46,9 @@ async function projects(): Promise<Project[]> {
   return result;
 }
 function dbOpen(): DatabaseSync {
-  const db = new DatabaseSync(join(root(), "tasks.sqlite"));
+  const path = join(root(), "tasks.sqlite");
+  const db = new DatabaseSync(path);
+  try { chmodSync(path, 0o600); } catch {}
   db.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY, project TEXT NOT NULL, project_path TEXT NOT NULL, profile TEXT NOT NULL, prompt TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, output TEXT NOT NULL DEFAULT '', exit_code INTEGER); CREATE INDEX IF NOT EXISTS tasks_queue ON tasks(status,created_at); CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);");
   return db;
 }
@@ -139,6 +142,7 @@ export function startTelegramAgentControl(): void {
   started = true;
   void (async () => {
     await mkdir(root(), { recursive: true, mode: 0o700 });
+    try { await (await import("node:fs/promises")).chmod(root(), 0o700); } catch {}
     const db = dbOpen();
     db.prepare("UPDATE tasks SET status='failed',output='Pi exited or restarted before the task result was saved; inspect the project before retrying.',updated_at=? WHERE status='running'").run(now());
     let offset = Number((db.prepare("SELECT value FROM settings WHERE key='telegram_offset'").get() as any)?.value ?? 0);
