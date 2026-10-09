@@ -42,6 +42,7 @@ import {
 import { renderSingleSelectRows, type QuestionOption } from "./single-select-layout";
 import { recordActual, recordDecision, readDecisionHistory, rateDecision, type DecisionRating } from "./decision-history";
 import { notifyTelegramDecision, requestTelegramDecision } from "./telegram-decision";
+import { startTelegramAgentControl } from "./telegram-agent-control";
 
 import { createRequire } from "node:module";
 const _require = createRequire(import.meta.url);
@@ -3001,6 +3002,8 @@ async function requestDecision(
 }
 
 export default function(pi: ExtensionAPI) {
+   // Agent control uses a separate bot token so its long poll cannot conflict with ask_user decisions.
+   startTelegramAgentControl();
    // Flat object shape: union item schemas get stripped or rejected
    // by several providers/proxies (Google function calling,
    // Codex-style backends, cmux), leaving the model to guess the shape
