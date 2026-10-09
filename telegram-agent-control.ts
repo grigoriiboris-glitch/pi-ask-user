@@ -40,7 +40,7 @@ async function projects(): Promise<Project[]> {
   const items = Array.isArray(raw) ? raw : Array.isArray(raw?.projects) ? raw.projects : [];
   const result: Project[] = [];
   for (const p of items) {
-    if (!p || typeof p.id !== "string" || !/^[\w-]{1,40}$/.test(p.id) || typeof p.path !== "string") continue;
+    if (!p || typeof p.id !== "string" || !/^[\w-]{1,40}$/.test(p.id) || typeof p.path !== "string" || !isAbsolute(p.path)) continue;
     try { result.push({ id: p.id, path: await realpath(p.path), ...(typeof p.description === "string" ? { description: p.description.slice(0, 160) } : {}) }); } catch {}
   }
   return result;
