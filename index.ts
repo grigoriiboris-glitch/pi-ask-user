@@ -41,7 +41,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { renderSingleSelectRows, type QuestionOption } from "./single-select-layout";
 import { recordActual, recordDecision, readDecisionHistory, rateDecision, type DecisionRating } from "./decision-history";
-import { requestTelegramDecision } from "./telegram-decision";
+import { notifyTelegramDecision, requestTelegramDecision } from "./telegram-decision";
 
 import { createRequire } from "node:module";
 const _require = createRequire(import.meta.url);
@@ -3214,7 +3214,7 @@ export default function(pi: ExtensionAPI) {
          if (decisionMode !== "off") {
             const suggestion = await requestDecision(question, normalizedContext, options, allowMultiple, allowFreeform, allowComment, signal);
             if (suggestion || decisionMode === "auto") {
-               decisionHistoryId = await recordDecision({
+               const audit = {
                   mode: decisionMode,
                   model: process.env.PI_DECISION_MODEL?.trim() || "unknown",
                   question,
@@ -3223,6 +3223,11 @@ export default function(pi: ExtensionAPI) {
                   suggestion: suggestion ? formatResponseSummary(suggestion.response) : "NEEDS_HUMAN",
                   confidence: suggestion?.confidence ?? 0,
                   reason: suggestion?.reason || "No confident AI suggestion; human decision required",
+               };
+               decisionHistoryId = await recordDecision(audit);
+               void notifyTelegramDecision({
+                  ...audit,
+                  threshold: getDecisionThreshold(),
                });
             }
             if (decisionMode === "auto" && suggestion && suggestion.confidence >= getDecisionThreshold()) {
