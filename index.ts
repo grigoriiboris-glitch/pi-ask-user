@@ -41,6 +41,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { renderSingleSelectRows, type QuestionOption } from "./single-select-layout";
 import { recordActual, recordDecision, readDecisionHistory, rateDecision, type DecisionRating } from "./decision-history";
+import { requestTelegramDecision } from "./telegram-decision";
 
 import { createRequire } from "node:module";
 const _require = createRequire(import.meta.url);
@@ -2716,6 +2717,7 @@ async function executeBatch(
 
    const decisionMode = getDecisionMode();
    let historyIds: Array<string | null> = [];
+   const preAnswered: Array<BatchAnswer | undefined> = questions.map(() => undefined);
    if (decisionMode !== "off") {
       const suggestions = await Promise.all(questions.map((item) =>
          requestDecision(item.question, item.context, item.options, item.allowMultiple, item.allowFreeform, settings.allowComment, signal),
@@ -2723,25 +2725,46 @@ async function executeBatch(
       historyIds = await Promise.all(suggestions.map((suggestion, index) => suggestion
          ? recordDecision({ mode: decisionMode, model: process.env.PI_DECISION_MODEL?.trim() || "unknown", question: questions[index]!.question, context: questions[index]!.context, options: questions[index]!.options.map((option) => option.title), suggestion: formatResponseSummary(suggestion.response), confidence: suggestion.confidence, reason: suggestion.reason })
          : Promise.resolve(null)));
-      if (decisionMode === "auto" && suggestions.every((item) => item && item.confidence >= getDecisionThreshold())) {
-         const answers: BatchAnswer[] = suggestions.map((item) => ({ status: "answered", response: item!.response }));
-         await Promise.all(historyIds.map((id, index) => {
-            const answer = answers[index]!;
-            return id && answer.status === "answered"
-               ? recordActual(id, formatResponseSummary(answer.response))
-               : Promise.resolve();
-         }));
-         questions.forEach((item, index) => {
-            const answer = answers[index]!;
-            events.answered(
-               { question: item.question, context: item.context, options: item.options },
-               answer.status === "answered" ? answer.response : { kind: "freeform", text: "" },
-            );
-         });
-         return {
-            content: [{ type: "text", text: "Decision model answered batch (" + suggestions.length + " questions)." }],
-            details: details(answers, false),
-         };
+      if (decisionMode === "auto") {
+         for (let index = 0; index < questions.length; index++) {
+            const item = questions[index]!;
+            const suggestion = suggestions[index];
+            let response = suggestion && suggestion.confidence >= getDecisionThreshold()
+               ? suggestion.response
+               : null;
+            if (!response) {
+               const human = await requestTelegramDecision({
+                  question: item.question,
+                  context: item.context,
+                  options: item.options.map((option) => ({ title: option.title, description: option.description })),
+                  allowMultiple: item.allowMultiple,
+                  allowFreeform: item.allowFreeform,
+                  signal,
+               });
+               if (human?.kind === "selection") response = { kind: "selection", selections: human.selections };
+               else if (human?.kind === "freeform") response = { kind: "freeform", text: human.text };
+            }
+            if (response) {
+               preAnswered[index] = { status: "answered", response };
+               const id = historyIds[index];
+               if (id) await recordActual(id, formatResponseSummary(response));
+            }
+         }
+         if (preAnswered.every((answer) => answer !== undefined)) {
+            const answers = preAnswered as BatchAnswer[];
+            questions.forEach((item, index) => {
+               const answer = answers[index]!;
+               events.answered(
+                  { question: item.question, context: item.context, options: item.options },
+                  answer.response,
+                  { index, total: questions.length },
+               );
+            });
+            return {
+               content: [{ type: "text", text: "Decision model and/or Telegram answered batch (" + answers.length + " questions)." }],
+               details: details(answers, false),
+            };
+         }
       }
       if (decisionMode === "ask" && ctx.ui) {
          const proposed = suggestions.map((item, index) => item ? (index + 1) + ". " + formatResponseSummary(item.response) + " (" + Math.round(item.confidence * 100) + "%)" : "");
@@ -2750,8 +2773,14 @@ async function executeBatch(
       }
    }
 
+   const pendingIndexes = questions.map((_, index) => index).filter((index) => !preAnswered[index]);
+   const pendingQuestions = pendingIndexes.map((index) => questions[index]!);
+   if (pendingQuestions.length === 0) {
+      const answers = preAnswered as BatchAnswer[];
+      return { content: [{ type: "text", text: formatBatchAnswers(details(answers, false)) }], details: details(answers, false) };
+   }
    if (!ctx.hasUI || !ctx.ui) {
-      throw new Error(formatBatchForMessage(questions, settings.allowComment));
+      throw new Error(formatBatchForMessage(pendingQuestions, settings.allowComment));
    }
 
    onUpdate?.({
@@ -2777,8 +2806,8 @@ async function executeBatch(
          displayMode: settings.displayMode,
          overlayToggle: settings.shortcuts.overlayToggle,
          createComponent: (tui, theme, keybindings, complete) =>
-            new BatchAskComponent(questions, settings, tui, theme, keybindings, complete),
-         fallback: () => askBatchViaDialogs(ctx.ui, questions, settings.allowComment, batch.signal, deadline),
+            new BatchAskComponent(pendingQuestions, settings, tui, theme, keybindings, complete),
+         fallback: () => askBatchViaDialogs(ctx.ui, pendingQuestions, settings.allowComment, batch.signal, deadline),
       }));
    } finally {
       if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
@@ -2793,19 +2822,24 @@ async function executeBatch(
       };
    }
 
+   const mergedAnswers = [...preAnswered] as Array<BatchAnswer | undefined>;
+   pendingIndexes.forEach((originalIndex, pendingIndex) => {
+      mergedAnswers[originalIndex] = answers![pendingIndex]!;
+   });
+   const finalAnswers = mergedAnswers as BatchAnswer[];
    // Skipped questions emit nothing; each answered one emits its usual event.
    await Promise.all(historyIds.map((id, index) => {
-      const answer = answers![index];
+      const answer = finalAnswers[index];
       return id && answer?.status === "answered"
          ? recordActual(id, formatResponseSummary(answer.response))
          : Promise.resolve();
    }));
-   answers.forEach((answer, index) => {
-      if (answer.status === "answered") {
+   finalAnswers.forEach((answer, index) => {
+      if (answer.status === "answered" && !preAnswered[index]) {
          events.answered(subjects[index]!, answer.response, { index, total: subjects.length });
       }
    });
-   const result = details(answers, false);
+   const result = details(finalAnswers, false);
    return {
       content: [{ type: "text", text: formatBatchAnswers(result) }],
       details: result,
@@ -2997,11 +3031,11 @@ export default function(pi: ExtensionAPI) {
             runtimeDecisionMode = getDecisionMode() === "auto" ? "off" : "auto";
             const enabled = runtimeDecisionMode === "auto";
             ctx.ui.setStatus?.("ask-user-auto-answer", enabled ? "AI auto-answer: ON" : "AI auto-answer: OFF");
-            ctx.ui.notify(enabled ? "AI auto-answer enabled. Press Ctrl+Shift+A or run /decision toggle to answer manually again." : "AI auto-answer disabled. Questions will wait for your answer.", "info");
+            ctx.ui.notify(enabled ? "AI auto-answer enabled. Run /decision toggle to answer manually again." : "AI auto-answer disabled. Questions will wait for your answer.", "info");
             return;
          }
          if (value === "status" || !value) {
-            ctx.ui.notify("ask_user decision mode: " + getDecisionMode() + "; threshold: " + getDecisionThreshold().toFixed(2) + "; model: " + (process.env.PI_DECISION_MODEL ? "configured" : "not configured"), "info");
+            ctx.ui.notify("ask_user decision mode: " + getDecisionMode() + "; threshold: " + getDecisionThreshold().toFixed(2) + "; model: " + (process.env.PI_DECISION_MODEL ? "configured" : "not configured") + "; Telegram: " + (process.env.PI_ASK_USER_TELEGRAM_BOT_TOKEN && process.env.PI_ASK_USER_TELEGRAM_CHAT_ID ? "configured via SOCKS5" : "not configured"), "info");
             return;
          }
          if (value !== "auto" && value !== "ask" && value !== "off") {
@@ -3176,6 +3210,28 @@ export default function(pi: ExtensionAPI) {
                   content: [{ type: "text", text: "Decision model answered: " + formatResponseSummary(response) + " (confidence " + suggestion.confidence.toFixed(2) + "). Reason: " + (suggestion.reason || "not provided") }],
                   details: { question, context: normalizedContext, options, response, cancelled: false } as AskToolDetails,
                };
+            }
+            if (decisionMode === "auto" && (!suggestion || suggestion.confidence < getDecisionThreshold())) {
+               const human = await requestTelegramDecision({
+                  question,
+                  context: normalizedContext,
+                  options: options.map((option) => ({ title: option.title, description: option.description })),
+                  allowMultiple,
+                  allowFreeform,
+                  signal,
+                  timeoutMs: timeout,
+               });
+               const response: AskResponse | null = human?.kind === "selection"
+                  ? { kind: "selection", selections: human.selections }
+                  : human?.kind === "freeform" ? { kind: "freeform", text: human.text } : null;
+               if (response) {
+                  if (decisionHistoryId) await recordActual(decisionHistoryId, formatResponseSummary(response));
+                  events.answered(subject, response);
+                  return {
+                     content: [{ type: "text", text: "Human answered via Telegram: " + formatResponseSummary(response) }],
+                     details: { question, context: normalizedContext, options, response, cancelled: false } as AskToolDetails,
+                  };
+               }
             }
             if (decisionMode === "ask" && suggestion && ctx.ui) {
                ctx.ui.notify("Decision suggestion: " + formatResponseSummary(suggestion.response) + " (" + Math.round(suggestion.confidence * 100) + "%). " + suggestion.reason, "info");
