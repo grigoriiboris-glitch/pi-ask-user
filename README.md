@@ -301,12 +301,13 @@ The default mode is `off`. The decision endpoint must accept an OpenAI-compatibl
 
 ### Runtime commands
 
+- `/decision toggle` — quickly switch between automatic answers and manual answers.
 - `/decision status` — show current mode and whether a model is configured.
 - `/decision off` — keep all prompts manual.
 - `/decision ask` — show the model's suggestion, then keep the normal prompt for manual selection.
 - `/decision auto` — automatically submit a validated selection, multi-selection, or allowed freeform answer only when confidence meets the configured threshold (default `0.85`). For batches, every answer must pass validation and threshold checks.
 
-Commands change the mode for the current Pi process only. Use `PI_ASK_USER_DECISION_MODE` for the startup default. If the provider is unavailable, returns invalid JSON, proposes invalid choices, returns `NEEDS_HUMAN`, or falls below the threshold, the normal manual prompt is shown. Requests time out after 10 seconds. Multi-select answers are checked against exact option titles and the `allowMultiple` setting; freeform answers are accepted only when `allowFreeform` is enabled. The model receives only the current question(s), supplied context, available options, and short fixed constraints—not the full Pi conversation.
+Auto-answer is **off by default**. The shortcut and toggle command change the mode for the current Pi process only. Use `PI_ASK_USER_DECISION_MODE` for the startup default. If the provider is unavailable, returns invalid JSON, proposes invalid choices, returns `NEEDS_HUMAN`, or falls below the threshold, the normal manual prompt is shown. Requests time out after 10 seconds. Multi-select answers are checked against exact option titles and the `allowMultiple` setting; freeform answers are accepted only when `allowFreeform` is enabled. The model receives only the current question(s), supplied context, available options, and short fixed constraints—not the full Pi conversation.
 
 
 

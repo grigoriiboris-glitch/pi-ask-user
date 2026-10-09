@@ -2993,18 +2993,27 @@ export default function(pi: ExtensionAPI) {
             ctx.ui.notify("Decision history: " + records.length + " total; " + rated.length + " rated; " + (rated.length ? Math.round(correct / rated.length * 100) + "%" : "n/a") + " accuracy (excluding unsure/unrated).\nask: " + byMode("ask") + "; auto: " + byMode("auto") + "; unrated: " + records.filter((r) => !r.rating).length + "; unsure: " + records.filter((r) => r.rating === "unsure").length, "info");
             return;
          }
+         if (value === "toggle") {
+            runtimeDecisionMode = getDecisionMode() === "auto" ? "off" : "auto";
+            const enabled = runtimeDecisionMode === "auto";
+            ctx.ui.setStatus?.("ask-user-auto-answer", enabled ? "AI auto-answer: ON" : "AI auto-answer: OFF");
+            ctx.ui.notify(enabled ? "AI auto-answer enabled. Press Ctrl+Shift+A or run /decision toggle to answer manually again." : "AI auto-answer disabled. Questions will wait for your answer.", "info");
+            return;
+         }
          if (value === "status" || !value) {
             ctx.ui.notify("ask_user decision mode: " + getDecisionMode() + "; threshold: " + getDecisionThreshold().toFixed(2) + "; model: " + (process.env.PI_DECISION_MODEL ? "configured" : "not configured"), "info");
             return;
          }
          if (value !== "auto" && value !== "ask" && value !== "off") {
-            ctx.ui.notify("Usage: /decision auto|ask|off|status|history|review|stats|rate <id> correct|incorrect|unsure. Persist mode with PI_ASK_USER_DECISION_MODE.", "warning");
+            ctx.ui.notify("Usage: /decision toggle|auto|ask|off|status|history|review|stats|rate <id> correct|incorrect|unsure. Persist mode with PI_ASK_USER_DECISION_MODE.", "warning");
             return;
          }
          runtimeDecisionMode = value as DecisionMode;
+         ctx.ui.setStatus?.("ask-user-auto-answer", value === "auto" ? "AI auto-answer: ON" : "AI auto-answer: OFF");
          ctx.ui.notify("ask_user decision mode set to " + value + " for this Pi session.", "info");
       },
    });
+
 
    pi.registerTool({
       ...modelOnly,
