@@ -42,6 +42,8 @@ describe("Telegram human fallback", () => {
     expect(message).toContain("применено автоматически");
     expect(message).toContain("Решение ИИ: SQLite");
     expect(message).toContain("Модель: flash-model");
+    const uncertain = formatDecisionAudit({ question: "?", options: [], model: "m", mode: "auto", suggestion: "NEEDS_HUMAN", confidence: 0, reason: "uncertain", threshold: 0 });
+    expect(uncertain).toContain("требуется/ожидается проверка");
   });
 
 
