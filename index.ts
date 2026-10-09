@@ -3146,7 +3146,7 @@ export default function(pi: ExtensionAPI) {
             if (decisionMode === "auto" && suggestion && suggestion.confidence >= getDecisionThreshold()) {
                const response = suggestion.response;
                if (decisionHistoryId) await recordActual(decisionHistoryId, formatResponseSummary(response));
-               if (decisionHistoryId) await recordActual(decisionHistoryId, formatResponseSummary(response));
+
             events.answered(subject, response);
                return {
                   content: [{ type: "text", text: "Decision model answered: " + formatResponseSummary(response) + " (confidence " + suggestion.confidence.toFixed(2) + "). Reason: " + (suggestion.reason || "not provided") }],
@@ -3181,6 +3181,7 @@ export default function(pi: ExtensionAPI) {
                };
             }
 
+            if (decisionHistoryId) await recordActual(decisionHistoryId, formatResponseSummary(response));
             events.answered(subject, response);
             return {
                content: [{ type: "text", text: `User answered: ${formatResponseSummary(response)}` }],
