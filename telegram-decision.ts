@@ -187,7 +187,9 @@ export async function requestTelegramDecision(input: {
   if (allowedUserText && !Number.isSafeInteger(allowedUserId)) return null;
 
   const proxyUrl = process.env.PI_ASK_USER_TELEGRAM_PROXY?.trim() || "socks5h://127.0.0.1:2080";
-  const timeoutMs = input.timeoutMs && input.timeoutMs > 0\n    ? Math.min(3600000, Math.max(1000, input.timeoutMs))\n    : configuredTimeout();
+  const timeoutMs = input.timeoutMs && input.timeoutMs > 0
+    ? Math.min(3600000, Math.max(1000, input.timeoutMs))
+    : configuredTimeout();
   const deadline = Date.now() + timeoutMs;
   const requestId = randomUUID().slice(0, 8);
   const selected = new Set<number>();
