@@ -226,6 +226,14 @@ export async function notifyTelegramDecision(input: TelegramDecisionAudit): Prom
  * Returns null when unconfigured, cancelled, timed out, or unreachable so the
  * caller can fall back to Pi's local UI.
  */
+/** Shared Telegram API transport for the separate agent-control bot. */
+export async function telegramControlApi<T>(method: string, body: Record<string, unknown>): Promise<T> {
+  const token = process.env.PI_ASK_USER_CONTROL_BOT_TOKEN?.trim();
+  if (!token) throw new Error("PI_ASK_USER_CONTROL_BOT_TOKEN is not configured");
+  const proxyUrl = process.env.PI_ASK_USER_TELEGRAM_PROXY?.trim() || "socks5h://127.0.0.1:2080";
+  return telegramCall<T>(token, method, body, proxyUrl, method === "getUpdates" ? 30000 : 15000);
+}
+
 export async function requestTelegramDecision(input: {
   question: string;
   context?: string;
