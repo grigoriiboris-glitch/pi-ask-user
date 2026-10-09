@@ -384,11 +384,11 @@ JSON
 Only project IDs in this file can be selected. Paths are canonicalized before execution. Use these bot commands:
 
 - `/projects` — list allowed projects.
-- `/new <project> <auto|developer|reviewer|tester|debugger> <task>` — prepare a plan. For example: `/new web-studio reviewer Проверь регистрацию и тесты API`.
+- `/new <project> <task>` — prepare a plan using the selected project directory and its Pi instructions/settings, without adding a role prompt. For example: `/new web-studio Проверь регистрацию и тесты API`.\n- Optional explicit role: `/new <project> <developer|reviewer|tester|debugger|auto> <task>`. For example: `/new web-studio reviewer Проверь регистрацию и тесты API`.
 - `/tasks` and `/status` — inspect recent tasks and current execution.
 - `/logs <id>` — read saved output and exit code for a task.
 - `/cancel <id>` — cancel a queued task or send SIGTERM to the active Pi process.
 
-Every task first appears as a plan with **Confirm** and **Reject** buttons. Only an explicit confirmation enters the sequential SQLite queue and starts `pi --print` in the selected project directory. Profiles are fixed instructions, not arbitrary shell commands. Task states and output are stored in `~/.pi/agent/telegram-control/tasks.sqlite`; interrupted tasks are marked failed on restart rather than automatically re-run, because they may already have changed files. Inspect the project before retrying.
+Every task first appears as a plan with **Confirm** and **Reject** buttons. Only an explicit confirmation enters the sequential SQLite queue and starts `pi --print` in the selected project directory. When no role is specified, the task text is passed to `pi --print` unchanged, with the project directory as its working directory, so Pi can use that project’s local instructions and settings. Explicit profiles add their fixed instructions; task text is never run as a shell command. Task states and output are stored in `~/.pi/agent/telegram-control/tasks.sqlite`; interrupted tasks are marked failed on restart rather than automatically re-run, because they may already have changed files. Inspect the project before retrying.
 
 The controller requires a Node.js version that provides `node:sqlite` (Node 22.5+; use a current Node 22 or 24 release). Keep the existing Telegram decision bot and its `PI_ASK_USER_TELEGRAM_*` settings unchanged for `ask_user` human fallback.
