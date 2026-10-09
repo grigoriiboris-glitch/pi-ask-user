@@ -2725,11 +2725,19 @@ async function executeBatch(
          : Promise.resolve(null)));
       if (decisionMode === "auto" && suggestions.every((item) => item && item.confidence >= getDecisionThreshold())) {
          const answers: BatchAnswer[] = suggestions.map((item) => ({ status: "answered", response: item!.response }));
-         await Promise.all(historyIds.map((id, index) => id ? recordActual(id, formatResponseSummary(answers[index]!.response)) : Promise.resolve()));
-         questions.forEach((item, index) => events.answered(
-            { question: item.question, context: item.context, options: item.options },
-            answers[index]!.status === "answered" ? answers[index]!.response : { kind: "freeform", text: "" },
-         ));
+         await Promise.all(historyIds.map((id, index) => {
+            const answer = answers[index]!;
+            return id && answer.status === "answered"
+               ? recordActual(id, formatResponseSummary(answer.response))
+               : Promise.resolve();
+         }));
+         questions.forEach((item, index) => {
+            const answer = answers[index]!;
+            events.answered(
+               { question: item.question, context: item.context, options: item.options },
+               answer.status === "answered" ? answer.response : { kind: "freeform", text: "" },
+            );
+         });
          return {
             content: [{ type: "text", text: "Decision model answered batch (" + suggestions.length + " questions)." }],
             details: details(answers, false),

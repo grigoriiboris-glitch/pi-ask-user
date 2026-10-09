@@ -7,6 +7,7 @@ const [tarball] = JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json",
 const expectedFiles = [
   "LICENSE",
   "README.md",
+  "decision-history.ts",
   "index.ts",
   "package.json",
   "single-select-layout.ts",
