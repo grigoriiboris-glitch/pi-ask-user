@@ -3146,7 +3146,8 @@ export default function(pi: ExtensionAPI) {
             if (decisionMode === "auto" && suggestion && suggestion.confidence >= getDecisionThreshold()) {
                const response = suggestion.response;
                if (decisionHistoryId) await recordActual(decisionHistoryId, formatResponseSummary(response));
-               events.answered(subject, response);
+               if (decisionHistoryId) await recordActual(decisionHistoryId, formatResponseSummary(response));
+            events.answered(subject, response);
                return {
                   content: [{ type: "text", text: "Decision model answered: " + formatResponseSummary(response) + " (confidence " + suggestion.confidence.toFixed(2) + "). Reason: " + (suggestion.reason || "not provided") }],
                   details: { question, context: normalizedContext, options, response, cancelled: false } as AskToolDetails,
@@ -3233,6 +3234,7 @@ export default function(pi: ExtensionAPI) {
             };
          }
 
+         if (decisionHistoryId) await recordActual(decisionHistoryId, formatResponseSummary(result));
          events.answered(subject, result);
          return {
             content: [{ type: "text", text: `User answered: ${formatResponseSummary(result)}` }],
