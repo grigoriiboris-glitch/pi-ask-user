@@ -29,9 +29,9 @@ export function inferProfile(task: string): Profile {
   return "developer";
 }
 export function parseSessionCommand(text: string): { name: string; slug: string } | null {
-  const match = text.trim().match(/^\\/session\\s+([\\w -]{1,48})$/i);
+  const match = text.trim().match(/^\/session\s+([\w -]{1,48})$/i);
   if (!match) return null;
-  const name = match[1]!.trim().replace(/\\s+/g, " ");
+  const name = match[1]!.trim().replace(/\s+/g, " ");
   const slug = name.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "").slice(0, 48);
   return slug ? { name, slug } : null;
 }
@@ -165,10 +165,10 @@ async function runNext(db: DatabaseSync, chat: number): Promise<void> {
   }
   update(db, t.id, "running");
   await send(chat, "⏳ Запускаю #" + t.id + ": " + t.project + "/" + t.profile);
-  const resultInstructions = "\\n\\nFinal response requirements: briefly state what you did, list important files changed, and report the exact tests/checks run with their results. If you could not run checks, say so explicitly. Do not claim tests passed unless they actually ran. Do not expose secrets.";
+  const resultInstructions = "\n\nFinal response requirements: briefly state what you did, list important files changed, and report the exact tests/checks run with their results. If you could not run checks, say so explicitly. Do not claim tests passed unless they actually ran. Do not expose secrets.";
   const prompt = (t.profile === "project"
     ? t.prompt
-    : ROLES[t.profile as Exclude<Profile, "project">] + "\\n\\nTask:\\n" + t.prompt + "\\n\\nDo not run destructive commands. Stay within the selected project; if a risky action is needed, stop and report it.") + resultInstructions;
+    : ROLES[t.profile as Exclude<Profile, "project">] + "\n\nTask:\n" + t.prompt + "\n\nDo not run destructive commands. Stay within the selected project; if a risky action is needed, stop and report it.") + resultInstructions;
   let output = "", settled = false;
   const activeSession = String((db.prepare("SELECT value FROM settings WHERE key=?").get("active_session:" + t.project) as any)?.value ?? "main");
   const sessionSlug = activeSession.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "main";
@@ -205,7 +205,7 @@ async function textCommand(db: DatabaseSync, chat: number, text: string): Promis
     const rows = db.prepare("SELECT key,value FROM settings WHERE key LIKE ? ORDER BY key").all("session_label:" + projectId + ":%") as any[];
     const active = String((db.prepare("SELECT value FROM settings WHERE key=?").get("active_session:" + projectId) as any)?.value ?? "main");
     const names = new Set<string>(["main", ...rows.map(row => String(row.value))]);
-    return void await send(chat, "Сессии проекта " + projectId + " (активная отмечена ▶):\\n" + [...names].sort((a,b)=>a.localeCompare(b)).map(name => (name === active ? "▶ " : "• ") + name).join("\\n") + "\\n\\nВыбрать/создать: /session <имя>");
+    return void await send(chat, "Сессии проекта " + projectId + " (активная отмечена ▶):\n" + [...names].sort((a,b)=>a.localeCompare(b)).map(name => (name === active ? "▶ " : "• ") + name).join("\n") + "\n\nВыбрать/создать: /session <имя>");
   }
   const sessionCmd = parseSessionCommand(cmd);
   if (sessionCmd) {
