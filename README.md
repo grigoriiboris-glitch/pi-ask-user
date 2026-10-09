@@ -384,12 +384,17 @@ JSON
 Only project IDs in this file can be selected. Paths are canonicalized before execution. Use these bot commands:
 
 - `/projects` — list allowed projects.
-- `/new project-id` — open a Pi session in that project without supplying a user task. It asks for confirmation, reads local instructions without editing files, and replies when ready.\n- `/task your task` — continue the selected project’s Pi session with a task, preserving session context.\n- `/skills` — list available skills discovered in the active project and global Pi skill directory.
-- `/skill skill-name [task]` — load and follow any matching `SKILL.md`; omit the task to let the skill start its own workflow.\n- `/new project-id your task` — start a task directly in that project.\n- An explicit role is optional: `/new project-id reviewer your task` (also supports developer, tester, debugger, and auto).\n\nSkills are searched in `.pi/skills`, `.agents/skills`, `.claude/skills`, and `skills` within the project, then in `~/.pi/agent/skills`.
+- `/new project-id` — select a project and open its `main` session after confirmation; reads local instructions without editing files.
+- `/new project-id your task` — queue a task in the selected project; a role is optional, e.g. `/new project-id reviewer review the auth code`.
+- `/session name` — select or create a named session for the active project.
+- `/sessions` — list the active project's sessions.
+- `/task your task` — continue the active project's selected session.
+- `/skills` — list available skills discovered in the active project and global Pi skill directory.
+- `/skill skill-name [task]` — load and follow a matching `SKILL.md`; omit the task to let the skill start its own workflow.
 - `/tasks` and `/status` — inspect recent tasks and current execution.
 - `/logs <id>` — read saved output and exit code for a task.
 - `/cancel <id>` — cancel a queued task or send SIGTERM to the active Pi process.
 
-Every task first appears as a plan with **Confirm** and **Reject** buttons. Only an explicit confirmation enters the sequential SQLite queue and starts Pi in the selected project directory. Follow-up tasks use Pi’s `--continue` option to resume that project’s latest session. When no role is specified, the task text is passed to `pi --print` unchanged, with the project directory as its working directory, so Pi can use that project’s local instructions and settings. Explicit profiles add their fixed instructions; task text is never run as a shell command. Task states and output are stored in `~/.pi/agent/telegram-control/tasks.sqlite`; interrupted tasks are marked failed on restart rather than automatically re-run, because they may already have changed files. Inspect the project before retrying.
+Every task first appears as a plan with **Confirm** and **Reject** buttons. Only an explicit confirmation enters the sequential SQLite queue and starts Pi in the selected project directory. Each project/session pair has a separate Pi session directory, so `--continue` resumes the selected session rather than whichever session happened to be most recent in the project. For implementation/review/test tasks, Pi is asked to report a concise summary, changed files, and exact checks/results; it must disclose checks it could not run. Task text is never executed as a shell command. Task states and output are stored in `~/.pi/agent/telegram-control/tasks.sqlite`; interrupted tasks are marked failed on restart rather than automatically re-run, because they may already have changed files. Inspect the project before retrying.
 
 The controller requires a Node.js version that provides `node:sqlite` (Node 22.5+; use a current Node 22 or 24 release). Keep the existing Telegram decision bot and its `PI_ASK_USER_TELEGRAM_*` settings unchanged for `ask_user` human fallback.
