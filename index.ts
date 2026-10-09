@@ -2722,18 +2722,22 @@ async function executeBatch(
       const suggestions = await Promise.all(questions.map((item) =>
          requestDecision(item.question, item.context, item.options, item.allowMultiple, item.allowFreeform, settings.allowComment, signal),
       ));
-      historyIds = await Promise.all(suggestions.map((suggestion, index) => suggestion || decisionMode === "auto"
-         ? recordDecision({
+      historyIds = await Promise.all(suggestions.map(async (suggestion, index) => {
+         if (!suggestion && decisionMode !== "auto") return null;
+         const item = questions[index]!;
+         const audit = {
             mode: decisionMode,
             model: process.env.PI_DECISION_MODEL?.trim() || "unknown",
-            question: questions[index]!.question,
-            context: questions[index]!.context,
-            options: questions[index]!.options.map((option) => option.title),
+            question: item.question,
+            context: item.context,
+            options: item.options.map((option) => option.title),
             suggestion: suggestion ? formatResponseSummary(suggestion.response) : "NEEDS_HUMAN",
             confidence: suggestion?.confidence ?? 0,
             reason: suggestion?.reason || "No confident AI suggestion; human decision required",
-         })
-         : Promise.resolve(null)));
+         };
+         void notifyTelegramDecision({ ...audit, threshold: getDecisionThreshold() });
+         return recordDecision(audit);
+      }));
       if (decisionMode === "auto") {
          for (let index = 0; index < questions.length; index++) {
             const item = questions[index]!;
