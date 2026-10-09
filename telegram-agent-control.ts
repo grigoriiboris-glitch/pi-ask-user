@@ -44,6 +44,38 @@ export function parseNewCommand(text: string): { project: string; profile: Profi
 
 function root(): string { return resolve(process.env.PI_ASK_USER_CONTROL_STATE_DIR?.trim() || join(homedir(), ".pi", "agent", "telegram-control")); }
 function skillSlug(value: string): string { return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
+async function listSkills(projectPath: string): Promise<string[]> {
+  const roots = [
+    join(projectPath, ".pi", "skills"), join(projectPath, ".agents", "skills"),
+    join(projectPath, ".claude", "skills"), join(projectPath, "skills"),
+    join(homedir(), ".pi", "agent", "skills"),
+  ];
+  const found = new Set<string>();
+  for (const base of roots) {
+    let baseReal: string;
+    try { baseReal = await realpath(base); } catch { continue; }
+    const visit = async (dir: string, depth: number): Promise<void> => {
+      let entries;
+      try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
+      if (entries.some(e => e.isFile() && e.name.toLowerCase() === "skill.md")) {
+        try {
+          const file = await realpath(join(dir, entries.find(e => e.isFile() && e.name.toLowerCase() === "skill.md")!.name));
+          if (file.startsWith(baseReal + "/")) {
+            const name = dir.split(/[\\\\/]/).pop() || "";
+            if (name) found.add(name);
+          }
+        } catch {}
+      }
+      if (depth <= 0) return;
+      for (const entry of entries) {
+        if (entry.isDirectory() && !entry.name.startsWith(".")) await visit(join(dir, entry.name), depth - 1);
+      }
+    };
+    await visit(baseReal, 3);
+  }
+  return [...found].sort((a, b) => a.localeCompare(b));
+}
+
 async function findSkill(projectPath: string, name: string): Promise<string | null> {
   if (!name.trim() || name.length > 100) return null;
   const roots = [
@@ -149,10 +181,17 @@ async function runNext(db: DatabaseSync, chat: number): Promise<void> {
 }
 async function textCommand(db: DatabaseSync, chat: number, text: string): Promise<void> {
   const cmd = text.trim();
-  if (cmd === "/start" || cmd === "/help") return void await send(chat, "Команды:\n/projects — проекты\n/new <проект> — открыть сессию проекта после подтверждения\n/new <проект> <задача> — задача, роль необязательна\n/task <задача> — задача в выбранном проекте\n/skill <имя> [задача] — любой найденный SKILL.md\n/tasks — очередь и история\n/status — текущая задача\n/logs <id> — вывод задачи\n/cancel <id> — отмена\n\nПеред запуском нужен клик «Подтвердить».");
+  if (cmd === "/start" || cmd === "/help") return void await send(chat, "Команды:\n/projects — проекты\n/new <проект> — открыть сессию проекта после подтверждения\n/new <проект> <задача> — задача, роль необязательна\n/task <задача> — задача в выбранном проекте\n/skills — список доступных навыков\n/skill <имя> [задача] — запустить навык\n/tasks — очередь и история\n/status — текущая задача\n/logs <id> — вывод задачи\n/cancel <id> — отмена\n\nПеред запуском нужен клик «Подтвердить».");
   if (cmd === "/projects") {
     const list = await projects();
     return void await send(chat, list.length ? list.map(p => p.id + " — " + p.path + (p.description ? " (" + p.description + ")" : "")).join("\n") : "Нет доступных проектов. Создай " + projectsFile() + ' с массивом [{"id":"app","path":"/absolute/path"}].');
+  }
+  if (cmd === "/skills") {
+    const active = String((db.prepare("SELECT value FROM settings WHERE key='active_project'").get() as any)?.value ?? "");
+    const project = (await projects()).find(p => p.id === active);
+    if (!project) return void await send(chat, "Сначала выбери проект командой /new <проект>.");
+    const names = await listSkills(project.path);
+    return void await send(chat, names.length ? "Доступные навыки для " + project.id + ":\\n" + names.map(name => "• " + name).join("\\n") + "\\n\\nЗапуск: /skill <имя> [задача]" : "Навыки не найдены в стандартных каталогах проекта или ~/.pi/agent/skills.");
   }
   if (cmd === "/tasks") {
     const rows = db.prepare("SELECT id,project,profile,status,prompt FROM tasks ORDER BY created_at DESC LIMIT 10").all() as any[];
