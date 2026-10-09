@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { requestTelegramDecision } from "../telegram-decision";
+import { formatDecisionAudit, requestTelegramDecision } from "../telegram-decision";
 
 const keys = [
   "PI_ASK_USER_TELEGRAM_BOT_TOKEN",
@@ -27,7 +27,6 @@ afterEach(() => {
 
 describe("Telegram human fallback", () => {
   test("formats every decision with confidence percentage and outcome status", () => {
-    const { formatDecisionAudit } = require("../telegram-decision") as typeof import("../telegram-decision");
     const message = formatDecisionAudit({
       question: "Which database?",
       context: "Small single-user app",
