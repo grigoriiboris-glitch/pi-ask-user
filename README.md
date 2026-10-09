@@ -196,7 +196,7 @@ export PI_ASK_USER_TELEGRAM_PROXY="socks5h://127.0.0.1:2080"
 export PI_ASK_USER_TELEGRAM_TIMEOUT_MS="300000"
 ```
 
-The extension sends every Telegram Bot API request through the SOCKS5 proxy at `127.0.0.1:2080` by default. It does not silently bypass the proxy. Use a dedicated bot token for this extension because Telegram `getUpdates` polling consumes updates for that bot. Keep the token private. If the bot, chat ID, proxy, or network is unavailable, or the question times out, the extension falls back to Pi's local question UI.
+The extension also sends a read-only audit message for every decision-mode attempt: model suggestion, confidence percentage, threshold, reason, available options, model, and whether the answer was auto-applied or requires review. Audit delivery failures never interrupt decisions. The extension sends every Telegram Bot API request through the SOCKS5 proxy at `127.0.0.1:2080` by default. It does not silently bypass the proxy. Use a dedicated bot token for this extension because Telegram `getUpdates` polling consumes updates for that bot. Keep the token private. If the bot, chat ID, proxy, or network is unavailable, or the question times out, the extension falls back to Pi's local question UI.
 
 Single-choice questions use inline buttons; multi-select questions have a **Готово** button; freeform answers are accepted as a reply to the bot's prompt. Telegram answers are stored in the existing decision history alongside the AI suggestion.
 
