@@ -384,7 +384,7 @@ JSON
 Only project IDs in this file can be selected. Paths are canonicalized before execution. Use these bot commands:
 
 - `/projects` — list allowed projects.
-- `/new <project> <task>` — prepare a plan using the selected project directory and its Pi instructions/settings, without adding a role prompt. For example: `/new web-studio Проверь регистрацию и тесты API`.\n- Optional explicit role: `/new <project> <developer|reviewer|tester|debugger|auto> <task>`. For example: `/new web-studio reviewer Проверь регистрацию и тесты API`.
+- `/new project-id` — select a project without starting Pi.\n- `/task your task` — start a task in the selected project, using its local Pi instructions/settings.\n- `/skill skill-name [task]` — load and follow any matching `SKILL.md`; omit the task to let the skill start its own workflow.\n- `/new project-id your task` — start a task directly in that project.\n- An explicit role is optional: `/new project-id reviewer your task` (also supports developer, tester, debugger, and auto).\n\nSkills are searched in `.pi/skills`, `.agents/skills`, `.claude/skills`, and `skills` within the project, then in `~/.pi/agent/skills`.
 - `/tasks` and `/status` — inspect recent tasks and current execution.
 - `/logs <id>` — read saved output and exit code for a task.
 - `/cancel <id>` — cancel a queued task or send SIGTERM to the active Pi process.
