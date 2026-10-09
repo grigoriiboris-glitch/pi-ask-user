@@ -2766,6 +2766,7 @@ async function executeBatch(
             const answers = preAnswered as BatchAnswer[];
             questions.forEach((item, index) => {
                const answer = answers[index]!;
+               if (answer.status !== "answered") return;
                events.answered(
                   { question: item.question, context: item.context, options: item.options },
                   answer.response,
