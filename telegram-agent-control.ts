@@ -36,7 +36,8 @@ export function parseNewCommand(text: string): { project: string; profile: Profi
 function root(): string { return resolve(process.env.PI_ASK_USER_CONTROL_STATE_DIR?.trim() || join(homedir(), ".pi", "agent", "telegram-control")); }
 function projectsFile(): string { return resolve(process.env.PI_ASK_USER_CONTROL_PROJECTS_FILE?.trim() || join(root(), "projects.json")); }
 async function projects(): Promise<Project[]> {
-  const raw = JSON.parse(await readFile(projectsFile(), "utf8")) as any;
+  let raw: any;
+  try { raw = JSON.parse(await readFile(projectsFile(), "utf8")); } catch { return []; }
   const items = Array.isArray(raw) ? raw : Array.isArray(raw?.projects) ? raw.projects : [];
   const result: Project[] = [];
   for (const p of items) {
@@ -102,6 +103,11 @@ async function textCommand(db: DatabaseSync, chat: number, text: string): Promis
   if (cmd === "/tasks") {
     const rows = db.prepare("SELECT id,project,profile,status,prompt FROM tasks ORDER BY created_at DESC LIMIT 10").all() as any[];
     return void await send(chat, rows.length ? rows.map(t => "#" + t.id + " [" + t.status + "] " + t.project + "/" + t.profile + "\n" + t.prompt).join("\n\n") : "Задач пока нет.");
+  }
+  const logs = cmd.match(/^\\/logs\\s+([a-f0-9-]{4,40})$/i);
+  if (logs) {
+    const t = db.prepare("SELECT status,output,exit_code FROM tasks WHERE id=?").get(logs[1]!) as any;
+    return void await send(chat, t ? "Задача #" + logs[1] + " [" + t.status + "] exit=" + (t.exit_code ?? "n/a") + "\\n\\n" + (t.output || "(вывод пока отсутствует)") : "Задача не найдена.");
   }
   if (cmd === "/status") {
     const t = db.prepare("SELECT id,project,profile,prompt FROM tasks WHERE status='running' LIMIT 1").get() as any;
