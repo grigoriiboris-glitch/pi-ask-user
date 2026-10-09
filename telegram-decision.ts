@@ -187,7 +187,7 @@ export async function requestTelegramDecision(input: {
   if (allowedUserText && !Number.isSafeInteger(allowedUserId)) return null;
 
   const proxyUrl = process.env.PI_ASK_USER_TELEGRAM_PROXY?.trim() || "socks5h://127.0.0.1:2080";
-  const timeoutMs = input.timeoutMs ?? configuredTimeout();
+  const timeoutMs = input.timeoutMs && input.timeoutMs > 0\n    ? Math.min(3600000, Math.max(1000, input.timeoutMs))\n    : configuredTimeout();
   const deadline = Date.now() + timeoutMs;
   const requestId = randomUUID().slice(0, 8);
   const selected = new Set<number>();
@@ -247,6 +247,9 @@ export async function requestTelegramDecision(input: {
           await telegramCall(token, "answerCallbackQuery", { callback_query_id: callback.id }, proxyUrl, 8000).catch(() => undefined);
           if (action === "free" && input.allowFreeform) {
             freeformMode = true;
+            await telegramCall(token, "editMessageReplyMarkup", {
+              chat_id: chatId, message_id: promptMessageId, reply_markup: { inline_keyboard: [] },
+            }, proxyUrl, 8000).catch(() => undefined);
             const reply = await telegramCall<TelegramMessage>(token, "sendMessage", {
               chat_id: chatId,
               text: "Напишите свой ответ и отправьте его ответом на это сообщение.",
