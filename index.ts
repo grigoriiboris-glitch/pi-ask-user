@@ -2907,7 +2907,7 @@ async function requestDecision(
       if (typeof parsed.confidence !== "number" || !Number.isFinite(parsed.confidence)) return null;
       const confidence = Math.max(0, Math.min(1, parsed.confidence));
       const reason = typeof parsed.reason === "string" ? parsed.reason.slice(0, 500) : "";
-      if (parsed.kind === "NEEDS_HUMAN") return { response: { kind: "freeform", text: "" }, confidence: 0, reason };
+      if (parsed.kind === "NEEDS_HUMAN") return null;
       let answer: AskResponse | null = null;
       if (parsed.kind === "selection" && options.length > 0 && Array.isArray(parsed.selections)
          && parsed.selections.every((x): x is string => typeof x === "string")) {
