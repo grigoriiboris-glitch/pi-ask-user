@@ -302,7 +302,6 @@ The default mode is `off`. The decision endpoint must accept an OpenAI-compatibl
 ### Runtime commands
 
 - `/decision toggle` — quickly switch between automatic answers and manual answers.
-- `Ctrl+Shift+A` — keyboard toggle for automatic answers; the footer shows ON/OFF state.
 - `/decision status` — show current mode and whether a model is configured.
 - `/decision off` — keep all prompts manual.
 - `/decision ask` — show the model's suggestion, then keep the normal prompt for manual selection.
