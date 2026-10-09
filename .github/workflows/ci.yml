@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -44,5 +44,5 @@ jobs:
         if: matrix.pi == '0.74.0'
         run: bun add --dev --exact --ignore-scripts @earendil-works/pi-coding-agent@0.74.0 @earendil-works/pi-tui@0.74.0
 
-      - name: Verify tests, types, real host, and package
+      - name: Verify tests, types, real host, docs, and package
         run: bun run check
