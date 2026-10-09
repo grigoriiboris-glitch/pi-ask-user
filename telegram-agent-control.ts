@@ -28,6 +28,13 @@ export function inferProfile(task: string): Profile {
   if (/debug|bug|ошиб|не работает|падает|исправь баг/.test(s)) return "debugger";
   return "developer";
 }
+export function parseSessionCommand(text: string): { name: string; slug: string } | null {
+  const match = text.trim().match(/^\\/session\\s+([\\w -]{1,48})$/i);
+  if (!match) return null;
+  const name = match[1]!.trim().replace(/\\s+/g, " ");
+  const slug = name.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "").slice(0, 48);
+  return slug ? { name, slug } : null;
+}
 export function parseNewCommand(text: string): { project: string; profile: Profile | "auto"; task: string } | null {
   const cmd = text.trim();
   const idle = cmd.match(/^\/new\s+([a-zA-Z0-9_-]+)$/i);
@@ -158,9 +165,10 @@ async function runNext(db: DatabaseSync, chat: number): Promise<void> {
   }
   update(db, t.id, "running");
   await send(chat, "⏳ Запускаю #" + t.id + ": " + t.project + "/" + t.profile);
-  const prompt = t.profile === "project"
+  const resultInstructions = "\\n\\nFinal response requirements: briefly state what you did, list important files changed, and report the exact tests/checks run with their results. If you could not run checks, say so explicitly. Do not claim tests passed unless they actually ran. Do not expose secrets.";
+  const prompt = (t.profile === "project"
     ? t.prompt
-    : ROLES[t.profile as Exclude<Profile, "project">] + "\n\nTask:\n" + t.prompt + "\n\nDo not expose secrets or run destructive commands. Stay within the selected project; if a risky action is needed, stop and report it.";
+    : ROLES[t.profile as Exclude<Profile, "project">] + "\\n\\nTask:\\n" + t.prompt + "\\n\\nDo not run destructive commands. Stay within the selected project; if a risky action is needed, stop and report it.") + resultInstructions;
   let output = "", settled = false;
   const activeSession = String((db.prepare("SELECT value FROM settings WHERE key=?").get("active_session:" + t.project) as any)?.value ?? "main");
   const sessionSlug = activeSession.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "main";
@@ -199,13 +207,11 @@ async function textCommand(db: DatabaseSync, chat: number, text: string): Promis
     const names = new Set<string>(["main", ...rows.map(row => String(row.value))]);
     return void await send(chat, "Сессии проекта " + projectId + " (активная отмечена ▶):\\n" + [...names].sort((a,b)=>a.localeCompare(b)).map(name => (name === active ? "▶ " : "• ") + name).join("\\n") + "\\n\\nВыбрать/создать: /session <имя>");
   }
-  const sessionCmd = cmd.match(/^\\/session\\s+([\\w -]{1,48})$/i);
+  const sessionCmd = parseSessionCommand(cmd);
   if (sessionCmd) {
     const projectId = String((db.prepare("SELECT value FROM settings WHERE key='active_project'").get() as any)?.value ?? "");
     if (!projectId || !(await projects()).some(p => p.id === projectId)) return void await send(chat, "Сначала выбери проект командой /new <проект>.");
-    const name = sessionCmd[1]!.trim().replace(/\\s+/g, " ");
-    const slug = name.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "").slice(0, 48);
-    if (!slug) return void await send(chat, "Имя сессии должно содержать латинские буквы или цифры.");
+    const { name, slug } = sessionCmd;
     db.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run("session_label:" + projectId + ":" + slug, name);
     db.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run("active_session:" + projectId, name);
     return void await send(chat, "Активная сессия проекта " + projectId + ": " + name + ". Следующая подтверждённая задача продолжит её; новая сессия создастся при первом запуске.");
