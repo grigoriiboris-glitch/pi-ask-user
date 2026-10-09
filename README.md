@@ -279,3 +279,47 @@ See [CONTRIBUTING.md](https://github.com/edlsh/pi-ask-user/blob/main/CONTRIBUTIN
 ## Changelog
 
 See [CHANGELOG.md](https://github.com/edlsh/pi-ask-user/blob/main/CHANGELOG.md).
+
+
+## Automatic decisions for `ask_user` (fork feature)
+
+This fork can optionally ask a separate OpenAI-compatible decision model to answer `ask_user` prompts. It supports single questions, multi-select, freeform answers when enabled, optional comments, and batches of 2-4 questions. For a batch in `auto` mode, every answer must validate and meet the confidence threshold; otherwise the entire batch stays interactive so the model never silently submits a partial batch.
+
+### Configuration
+
+Set these variables in the environment used to launch Pi:
+
+```bash
+export PI_ASK_USER_DECISION_MODE=off # off | ask | auto
+export PI_ASK_USER_DECISION_THRESHOLD=0.85
+export PI_DECISION_API_URL=https://your-provider.example/v1/chat/completions
+export PI_DECISION_API_KEY=your-api-key
+export PI_DECISION_MODEL=your-flash-model
+```
+
+The default mode is `off`. The decision endpoint must accept an OpenAI-compatible Chat Completions request, including JSON response format. The API key is read from the environment and is never written to session files or logs. Keep the endpoint and key private.
+
+### Runtime commands
+
+- `/decision status` — show current mode and whether a model is configured.
+- `/decision off` — keep all prompts manual.
+- `/decision ask` — show the model's suggestion, then keep the normal prompt for manual selection.
+- `/decision auto` — automatically submit a validated selection, multi-selection, or allowed freeform answer only when confidence meets the configured threshold (default `0.85`). For batches, every answer must pass validation and threshold checks.
+
+Commands change the mode for the current Pi process only. Use `PI_ASK_USER_DECISION_MODE` for the startup default. If the provider is unavailable, returns invalid JSON, proposes invalid choices, returns `NEEDS_HUMAN`, or falls below the threshold, the normal manual prompt is shown. Requests time out after 10 seconds. Multi-select answers are checked against exact option titles and the `allowMultiple` setting; freeform answers are accepted only when `allowFreeform` is enabled. The model receives only the current question(s), supplied context, available options, and short fixed constraints—not the full Pi conversation.
+
+
+
+### Decision history and accuracy review (fork feature)
+
+Decision suggestions are stored locally in an append-only JSONL journal at \`~/.pi/agent/ask-user-decisions.jsonl\`. Override the path with \`PI_ASK_USER_DECISION_HISTORY\`. The journal records the question, supplied context/options, model name, suggestion, confidence, reason, mode, and (when available) the final answer. API keys are never recorded. The history file may contain task context, so keep it private.
+
+Commands:
+- \`/decision history\` — show the latest 10 recorded suggestions.
+- \`/decision review\` — show up to 10 suggestions without a rating.
+- \`/decision rate <id> correct\` — rate a suggestion as correct.
+- \`/decision rate <id> incorrect\` — rate it as incorrect.
+- \`/decision rate <id> unsure\` — mark it uncertain and exclude it from accuracy.
+- \`/decision stats\` — show overall and \`ask\`/\`auto\` accuracy for explicitly rated correct/incorrect decisions.
+
+Ratings are human assessments, not proof of objective correctness. Unrated and \`unsure\` decisions are excluded from accuracy. History-write failures do not interrupt asking the user.

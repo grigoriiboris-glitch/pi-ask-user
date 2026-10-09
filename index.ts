@@ -40,6 +40,7 @@ import {
    wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import { renderSingleSelectRows, type QuestionOption } from "./single-select-layout";
+import { recordActual, recordDecision, readDecisionHistory, rateDecision, type DecisionRating } from "./decision-history";
 
 import { createRequire } from "node:module";
 const _require = createRequire(import.meta.url);
@@ -2713,6 +2714,34 @@ async function executeBatch(
       cancelled,
    });
 
+   const decisionMode = getDecisionMode();
+   let historyIds: Array<string | null> = [];
+   if (decisionMode !== "off") {
+      const suggestions = await Promise.all(questions.map((item) =>
+         requestDecision(item.question, item.context, item.options, item.allowMultiple, item.allowFreeform, settings.allowComment, signal),
+      ));
+      historyIds = await Promise.all(suggestions.map((suggestion, index) => suggestion
+         ? recordDecision({ mode: decisionMode, model: process.env.PI_DECISION_MODEL?.trim() || "unknown", question: questions[index]!.question, context: questions[index]!.context, options: questions[index]!.options.map((option) => option.title), suggestion: formatResponseSummary(suggestion.response), confidence: suggestion.confidence, reason: suggestion.reason })
+         : Promise.resolve(null)));
+      if (decisionMode === "auto" && suggestions.every((item) => item && item.confidence >= getDecisionThreshold())) {
+         const answers: BatchAnswer[] = suggestions.map((item) => ({ status: "answered", response: item!.response }));
+         await Promise.all(historyIds.map((id, index) => id ? recordActual(id, formatResponseSummary(answers[index]!.response)) : Promise.resolve()));
+         questions.forEach((item, index) => events.answered(
+            { question: item.question, context: item.context, options: item.options },
+            answers[index]!.status === "answered" ? answers[index]!.response : { kind: "freeform", text: "" },
+         ));
+         return {
+            content: [{ type: "text", text: "Decision model answered batch (" + suggestions.length + " questions)." }],
+            details: details(answers, false),
+         };
+      }
+      if (decisionMode === "ask" && ctx.ui) {
+         const proposed = suggestions.map((item, index) => item ? (index + 1) + ". " + formatResponseSummary(item.response) + " (" + Math.round(item.confidence * 100) + "%)" : "");
+         const message = proposed.filter(Boolean).join("; ");
+         if (message) ctx.ui.notify("Decision suggestions: " + message, "info");
+      }
+   }
+
    if (!ctx.hasUI || !ctx.ui) {
       throw new Error(formatBatchForMessage(questions, settings.allowComment));
    }
@@ -2757,6 +2786,12 @@ async function executeBatch(
    }
 
    // Skipped questions emit nothing; each answered one emits its usual event.
+   await Promise.all(historyIds.map((id, index) => {
+      const answer = answers![index];
+      return id && answer?.status === "answered"
+         ? recordActual(id, formatResponseSummary(answer.response))
+         : Promise.resolve();
+   }));
    answers.forEach((answer, index) => {
       if (answer.status === "answered") {
          events.answered(subjects[index]!, answer.response, { index, total: subjects.length });
@@ -2817,6 +2852,95 @@ function formatBatchResult(theme: Theme, details: AskBatchDetails, expanded: boo
    return text;
 }
 
+
+type DecisionMode = "off" | "ask" | "auto";
+type DecisionSuggestion = { response: AskResponse; confidence: number; reason: string };
+
+let runtimeDecisionMode: DecisionMode | undefined;
+
+function getDecisionMode(): DecisionMode {
+   if (runtimeDecisionMode) return runtimeDecisionMode;
+   const value = process.env.PI_ASK_USER_DECISION_MODE?.trim().toLowerCase();
+   return value === "auto" || value === "ask" ? value : "off";
+}
+
+function getDecisionThreshold(): number {
+   const parsed = Number(process.env.PI_ASK_USER_DECISION_THRESHOLD ?? "0.85");
+   return Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : 0.85;
+}
+
+async function requestDecision(
+   question: string,
+   context: string | undefined,
+   options: QuestionOption[],
+   allowMultiple: boolean,
+   allowFreeform: boolean,
+   allowComment: boolean,
+   signal?: AbortSignal,
+): Promise<DecisionSuggestion | null> {
+   const endpoint = process.env.PI_DECISION_API_URL?.trim();
+   const apiKey = process.env.PI_DECISION_API_KEY?.trim();
+   const model = process.env.PI_DECISION_MODEL?.trim();
+   if (!endpoint || !apiKey || !model) return null;
+
+   const controller = new AbortController();
+   const timeout = setTimeout(() => controller.abort(), 10000);
+   const forwardAbort = () => controller.abort();
+   signal?.addEventListener("abort", forwardAbort, { once: true });
+   try {
+      const response = await fetch(endpoint, {
+         method: "POST",
+         headers: { "content-type": "application/json", authorization: "Bearer " + apiKey },
+         body: JSON.stringify({
+            model,
+            temperature: 0,
+            max_tokens: 500,
+            response_format: { type: "json_object" },
+            messages: [
+               { role: "system", content: "You are a decision-only assistant for a coding agent. Answer the given ask_user question using only its allowed response format. For choices, use exact offered titles; never invent titles. If uncertain or unsupported, use kind NEEDS_HUMAN. For multi-select choose one or more titles, respecting the question. For freeform, provide concise text only when allowed. Return JSON with kind (selection, freeform, or NEEDS_HUMAN), selections (array of exact titles for selection), text (for freeform), optional comment, confidence (0 to 1), and reason." },
+               { role: "user", content: JSON.stringify({
+                  question, context: context ?? "",
+                  allowMultiple, allowFreeform, allowComment,
+                  constraints: ["Follow task requirements", "Preserve existing architecture", "Prefer minimal changes", "Avoid over-engineering"],
+                  options: options.map((option) => ({ title: option.title, description: option.description ?? "" })),
+               }) },
+            ],
+         }),
+         signal: controller.signal,
+      });
+      if (!response.ok) return null;
+      const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+      const content = payload.choices?.[0]?.message?.content;
+      if (typeof content !== "string") return null;
+      const parsed = JSON.parse(content) as {
+         kind?: unknown; selections?: unknown; text?: unknown; comment?: unknown;
+         confidence?: unknown; reason?: unknown;
+      };
+      if (typeof parsed.confidence !== "number" || !Number.isFinite(parsed.confidence)) return null;
+      const confidence = Math.max(0, Math.min(1, parsed.confidence));
+      const reason = typeof parsed.reason === "string" ? parsed.reason.slice(0, 500) : "";
+      if (parsed.kind === "NEEDS_HUMAN") return null;
+      let answer: AskResponse | null = null;
+      if (parsed.kind === "selection" && options.length > 0 && Array.isArray(parsed.selections)
+         && parsed.selections.every((x): x is string => typeof x === "string")) {
+         const selections = [...new Set(parsed.selections)];
+         const validTitles = new Set(options.map((option) => option.title));
+         if (selections.length > 0 && selections.every((title) => validTitles.has(title))
+            && (allowMultiple || selections.length === 1)) {
+            answer = createSelectionResponse(selections, allowComment && typeof parsed.comment === "string" ? parsed.comment : undefined);
+         }
+      } else if (parsed.kind === "freeform" && allowFreeform && typeof parsed.text === "string") {
+         answer = createFreeformResponse(parsed.text);
+      }
+      return answer ? { response: answer, confidence, reason } : null;
+   } catch {
+      return null;
+   } finally {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", forwardAbort);
+   }
+}
+
 export default function(pi: ExtensionAPI) {
    // Flat object shape: union item schemas get stripped or rejected
    // by several providers/proxies (Google function calling,
@@ -2833,6 +2957,47 @@ export default function(pi: ExtensionAPI) {
    // Asks the user, so only the model may call it; codemode scripts cannot open prompts. Pi types `exposure` from
    // 1.0 and older hosts ignore it, so it is spread in to keep the definition valid against every supported host.
    const modelOnly: Record<string, unknown> = { exposure: "model-only" };
+
+   pi.registerCommand("decision", {
+      description: "Configure decision mode, history, ratings, and stats",
+      handler: async (args, ctx) => {
+         const [subcommand, ...rest] = args.trim().split(/\s+/);
+         const value = (subcommand ?? "status").toLowerCase();
+         if (value === "history" || value === "review") {
+            const records = await readDecisionHistory();
+            const shown = (value === "review" ? records.filter((r) => !r.rating) : records).slice(0, 10);
+            if (!shown.length) { ctx.ui.notify(value === "review" ? "No unrated decisions." : "Decision history is empty.", "info"); return; }
+            ctx.ui.notify(shown.map((r) => "[" + r.id + "] " + r.mode.toUpperCase() + " " + Math.round(r.confidence * 100) + "% — " + r.question + "\n  AI: " + r.suggestion + (r.actual ? "\n  Actual: " + r.actual : "") + " | rating: " + (r.rating ?? "unrated")).join("\n\n"), "info");
+            return;
+         }
+         if (value === "rate") {
+            const [id, ratingText] = rest;
+            const rating = ratingText?.toLowerCase() as DecisionRating | undefined;
+            if (!id || !rating || !["correct", "incorrect", "unsure"].includes(rating)) { ctx.ui.notify("Usage: /decision rate <id> correct|incorrect|unsure", "warning"); return; }
+            ctx.ui.notify(await rateDecision(id, rating) ? "Decision " + id + " rated: " + rating : "Decision ID not found or history is not writable.", "info");
+            return;
+         }
+         if (value === "stats") {
+            const records = await readDecisionHistory();
+            const rated = records.filter((r) => r.rating === "correct" || r.rating === "incorrect");
+            const correct = rated.filter((r) => r.rating === "correct").length;
+            const byMode = (mode: DecisionMode) => { const group = rated.filter((r) => r.mode === mode); const good = group.filter((r) => r.rating === "correct").length; return group.length ? Math.round(good / group.length * 100) + "%" : "n/a"; };
+            ctx.ui.notify("Decision history: " + records.length + " total; " + rated.length + " rated; " + (rated.length ? Math.round(correct / rated.length * 100) + "%" : "n/a") + " accuracy (excluding unsure/unrated).\nask: " + byMode("ask") + "; auto: " + byMode("auto") + "; unrated: " + records.filter((r) => !r.rating).length + "; unsure: " + records.filter((r) => r.rating === "unsure").length, "info");
+            return;
+         }
+         if (value === "status" || !value) {
+            ctx.ui.notify("ask_user decision mode: " + getDecisionMode() + "; threshold: " + getDecisionThreshold().toFixed(2) + "; model: " + (process.env.PI_DECISION_MODEL ? "configured" : "not configured"), "info");
+            return;
+         }
+         if (value !== "auto" && value !== "ask" && value !== "off") {
+            ctx.ui.notify("Usage: /decision auto|ask|off|status|history|review|stats|rate <id> correct|incorrect|unsure. Persist mode with PI_ASK_USER_DECISION_MODE.", "warning");
+            return;
+         }
+         runtimeDecisionMode = value as DecisionMode;
+         ctx.ui.notify("ask_user decision mode set to " + value + " for this Pi session.", "info");
+      },
+   });
+
    pi.registerTool({
       ...modelOnly,
       name: "ask_user",
@@ -2979,6 +3144,27 @@ export default function(pi: ExtensionAPI) {
             );
          }
 
+
+         const decisionMode = getDecisionMode();
+         let decisionHistoryId: string | null = null;
+         if (decisionMode !== "off") {
+            const suggestion = await requestDecision(question, normalizedContext, options, allowMultiple, allowFreeform, allowComment, signal);
+            if (suggestion) decisionHistoryId = await recordDecision({ mode: decisionMode, model: process.env.PI_DECISION_MODEL?.trim() || "unknown", question, context: normalizedContext, options: options.map((option) => option.title), suggestion: formatResponseSummary(suggestion.response), confidence: suggestion.confidence, reason: suggestion.reason });
+            if (decisionMode === "auto" && suggestion && suggestion.confidence >= getDecisionThreshold()) {
+               const response = suggestion.response;
+               if (decisionHistoryId) await recordActual(decisionHistoryId, formatResponseSummary(response));
+
+            events.answered(subject, response);
+               return {
+                  content: [{ type: "text", text: "Decision model answered: " + formatResponseSummary(response) + " (confidence " + suggestion.confidence.toFixed(2) + "). Reason: " + (suggestion.reason || "not provided") }],
+                  details: { question, context: normalizedContext, options, response, cancelled: false } as AskToolDetails,
+               };
+            }
+            if (decisionMode === "ask" && suggestion && ctx.ui) {
+               ctx.ui.notify("Decision suggestion: " + formatResponseSummary(suggestion.response) + " (" + Math.round(suggestion.confidence * 100) + "%). " + suggestion.reason, "info");
+            }
+         }
+
          if (!ctx.hasUI || !ctx.ui) {
             const optionText = options.length > 0 ? `\n\nOptions:\n${formatOptionsForMessage(options)}` : "";
             const freeformHint = allowFreeform ? "\n\nYou can also answer freely." : "";
@@ -3002,6 +3188,7 @@ export default function(pi: ExtensionAPI) {
                };
             }
 
+            if (decisionHistoryId) await recordActual(decisionHistoryId, formatResponseSummary(response));
             events.answered(subject, response);
             return {
                content: [{ type: "text", text: `User answered: ${formatResponseSummary(response)}` }],
@@ -3055,6 +3242,7 @@ export default function(pi: ExtensionAPI) {
             };
          }
 
+         if (decisionHistoryId) await recordActual(decisionHistoryId, formatResponseSummary(result));
          events.answered(subject, result);
          return {
             content: [{ type: "text", text: `User answered: ${formatResponseSummary(result)}` }],
