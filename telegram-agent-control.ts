@@ -162,8 +162,13 @@ async function runNext(db: DatabaseSync, chat: number): Promise<void> {
     ? t.prompt
     : ROLES[t.profile as Exclude<Profile, "project">] + "\n\nTask:\n" + t.prompt + "\n\nDo not expose secrets or run destructive commands. Stay within the selected project; if a risky action is needed, stop and report it.";
   let output = "", settled = false;
-  const hasSession = (db.prepare("SELECT value FROM settings WHERE key=?").get("session_started:" + t.project) as any)?.value === "1";
-  const proc = spawn(process.env.PI_ASK_USER_CONTROL_PI_BIN?.trim() || "pi", [...(hasSession ? ["--continue"] : []), "--print", prompt], { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"], env: process.env });
+  const activeSession = String((db.prepare("SELECT value FROM settings WHERE key=?").get("active_session:" + t.project) as any)?.value ?? "main");
+  const sessionSlug = activeSession.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "main";
+  const sessionDir = join(root(), "sessions", t.project, sessionSlug);
+  await mkdir(sessionDir, { recursive: true, mode: 0o700 });
+  const sessionKey = "session_started:" + t.project + ":" + sessionSlug;
+  const hasSession = (db.prepare("SELECT value FROM settings WHERE key=?").get(sessionKey) as any)?.value === "1";
+  const proc = spawn(process.env.PI_ASK_USER_CONTROL_PI_BIN?.trim() || "pi", [...(hasSession ? ["--continue"] : []), "--session-dir", sessionDir, "--name", t.project + " / " + activeSession, "--print", prompt], { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"], env: process.env });
   child = proc;
   const collect = (chunk: Buffer) => { output = short(output + chunk.toString("utf8"), 50000); };
   proc.stdout?.on("data", collect); proc.stderr?.on("data", collect);
@@ -172,7 +177,7 @@ async function runNext(db: DatabaseSync, chat: number): Promise<void> {
     const current = db.prepare("SELECT status FROM tasks WHERE id=?").get(t.id) as any;
     const status = current?.status === "cancelled" ? "cancelled" : failed || code !== 0 ? "failed" : "completed";
     update(db, t.id, status, output, code);
-    if (status === "completed") db.prepare("INSERT INTO settings(key,value) VALUES(?, '1') ON CONFLICT(key) DO UPDATE SET value='1'").run("session_started:" + t.project);
+    if (status === "completed") db.prepare("INSERT INTO settings(key,value) VALUES(?, '1') ON CONFLICT(key) DO UPDATE SET value='1'").run(sessionKey);
     await send(chat, (status === "completed" ? "✅" : status === "cancelled" ? "⏹" : "❌") + " Задача #" + t.id + ": " + status + " (exit " + code + ")\n\n" + (output || "(нет текстового вывода)"));
     child = undefined; activeId = undefined; void runNext(db, chat);
   };
@@ -181,10 +186,29 @@ async function runNext(db: DatabaseSync, chat: number): Promise<void> {
 }
 async function textCommand(db: DatabaseSync, chat: number, text: string): Promise<void> {
   const cmd = text.trim();
-  if (cmd === "/start" || cmd === "/help") return void await send(chat, "Команды:\n/projects — проекты\n/new <проект> — открыть сессию проекта после подтверждения\n/new <проект> <задача> — задача, роль необязательна\n/task <задача> — задача в выбранном проекте\n/skills — список доступных навыков\n/skill <имя> [задача] — запустить навык\n/tasks — очередь и история\n/status — текущая задача\n/logs <id> — вывод задачи\n/cancel <id> — отмена\n\nПеред запуском нужен клик «Подтвердить».");
+  if (cmd === "/start" || cmd === "/help") return void await send(chat, "Команды:\n/projects — проекты\n/new <проект> — открыть проект после подтверждения\n/new <проект> <задача> — задача, роль необязательна\n/sessions — сессии активного проекта\n/session <имя> — выбрать или создать сессию\n/task <задача> — задача в выбранном проекте\n/skills — список доступных навыков\n/skill <имя> [задача] — запустить навык\n/tasks — очередь и история\n/status — текущая задача\n/logs <id> — вывод задачи\n/cancel <id> — отмена\n\nПеред запуском нужен клик «Подтвердить».");
   if (cmd === "/projects") {
     const list = await projects();
     return void await send(chat, list.length ? list.map(p => p.id + " — " + p.path + (p.description ? " (" + p.description + ")" : "")).join("\n") : "Нет доступных проектов. Создай " + projectsFile() + ' с массивом [{"id":"app","path":"/absolute/path"}].');
+  }
+  if (cmd === "/sessions") {
+    const projectId = String((db.prepare("SELECT value FROM settings WHERE key='active_project'").get() as any)?.value ?? "");
+    if (!projectId || !(await projects()).some(p => p.id === projectId)) return void await send(chat, "Сначала выбери проект командой /new <проект>.");
+    const rows = db.prepare("SELECT key,value FROM settings WHERE key LIKE ? ORDER BY key").all("session_label:" + projectId + ":%") as any[];
+    const active = String((db.prepare("SELECT value FROM settings WHERE key=?").get("active_session:" + projectId) as any)?.value ?? "main");
+    const names = new Set<string>(["main", ...rows.map(row => String(row.value))]);
+    return void await send(chat, "Сессии проекта " + projectId + " (активная отмечена ▶):\\n" + [...names].sort((a,b)=>a.localeCompare(b)).map(name => (name === active ? "▶ " : "• ") + name).join("\\n") + "\\n\\nВыбрать/создать: /session <имя>");
+  }
+  const sessionCmd = cmd.match(/^\\/session\\s+([\\w -]{1,48})$/i);
+  if (sessionCmd) {
+    const projectId = String((db.prepare("SELECT value FROM settings WHERE key='active_project'").get() as any)?.value ?? "");
+    if (!projectId || !(await projects()).some(p => p.id === projectId)) return void await send(chat, "Сначала выбери проект командой /new <проект>.");
+    const name = sessionCmd[1]!.trim().replace(/\\s+/g, " ");
+    const slug = name.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "").slice(0, 48);
+    if (!slug) return void await send(chat, "Имя сессии должно содержать латинские буквы или цифры.");
+    db.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run("session_label:" + projectId + ":" + slug, name);
+    db.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run("active_session:" + projectId, name);
+    return void await send(chat, "Активная сессия проекта " + projectId + ": " + name + ". Следующая подтверждённая задача продолжит её; новая сессия создастся при первом запуске.");
   }
   if (cmd === "/skills") {
     const active = String((db.prepare("SELECT value FROM settings WHERE key='active_project'").get() as any)?.value ?? "");
@@ -222,6 +246,8 @@ async function textCommand(db: DatabaseSync, chat: number, text: string): Promis
     const selected = (await projects()).find(p => p.id === parsed.project);
     if (!selected) return void await send(chat, "Проект не найден в разрешённом списке. Выполни /projects.");
     db.prepare("INSERT INTO settings(key,value) VALUES('active_project',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(selected.id);
+    db.prepare("INSERT INTO settings(key,value) VALUES(?, 'main') ON CONFLICT(key) DO NOTHING").run("active_session:" + selected.id);
+    db.prepare("INSERT INTO settings(key,value) VALUES(?, 'main') ON CONFLICT(key) DO NOTHING").run("session_label:" + selected.id + ":main");
     if (!parsed.task) {
       openingSession = true;
       parsed.task = "Initialize a persistent Pi session for this project. Read its local agent instructions and enough project structure to understand the repository. Do not edit files or run tests. Reply that the session is ready for my next instruction.";
