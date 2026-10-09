@@ -12,6 +12,7 @@ const expectedFiles = [
   "package.json",
   "single-select-layout.ts",
   "telegram-decision.ts",
+  "telegram-agent-control.ts",
   "skills/ask-user/SKILL.md",
   "skills/ask-user/references/ask-user-skill-extension-spec.md",
 ];
