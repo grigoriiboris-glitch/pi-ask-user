@@ -1,5 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { inferProfile, parseNewCommand } from "./telegram-agent-control";
+import { inferProfile, parseNewCommand, parseSessionCommand } from "./telegram-agent-control";
+
+describe("Telegram session command parsing", () => {
+  test("normalizes a named session", () => {
+    expect(parseSessionCommand("/session Feature Work")).toEqual({ name: "Feature Work", slug: "feature-work" });
+  });
+  test("rejects missing or non-Latin session names", () => {
+    expect(parseSessionCommand("/session")).toBeNull();
+    expect(parseSessionCommand("/session рабочая")).toBeNull();
+  });
+  test("rejects oversized session names", () => {
+    expect(parseSessionCommand("/session " + "a".repeat(49))).toBeNull();
+  });
+});
 
 describe("Telegram agent command parsing", () => {
   test("parses a task with an explicit role", () => {
