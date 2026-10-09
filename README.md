@@ -346,3 +346,46 @@ Commands:
 - \`/decision stats\` — show overall and \`ask\`/\`auto\` accuracy for explicitly rated correct/incorrect decisions.
 
 Ratings are human assessments, not proof of objective correctness. Unrated and \`unsure\` decisions are excluded from accuracy. History-write failures do not interrupt asking the user.
+
+
+## Control local Pi agents through Telegram
+
+The optional controller runs inside the local Pi extension process; Pi and the target repositories stay on your computer. It uses a **separate Telegram bot** from the `ask_user` decision bot, avoiding competing Telegram `getUpdates` pollers. Both use the configured SOCKS5 proxy.
+
+Create a second bot with BotFather, then configure these variables in the shell that starts Pi:
+
+```bash
+export PI_ASK_USER_CONTROL_BOT_TOKEN="123456:your-control-bot-token"
+export PI_ASK_USER_CONTROL_CHAT_ID="123456789"
+export PI_ASK_USER_CONTROL_USER_ID="123456789" # required; your numeric Telegram user ID
+# Optional: defaults to ~/.pi/agent/telegram-control/projects.json
+export PI_ASK_USER_CONTROL_PROJECTS_FILE="$HOME/.pi/agent/telegram-control/projects.json"
+# Optional: defaults to the executable named pi on PATH
+export PI_ASK_USER_CONTROL_PI_BIN="pi"
+# Shares the existing SOCKS5 setting; default socks5h://127.0.0.1:2080
+export PI_ASK_USER_TELEGRAM_PROXY="socks5h://127.0.0.1:2080"
+```
+
+The controller refuses to start without a valid chat ID and explicit user-ID allowlist. Keep the bot token secret.
+
+Create `~/.pi/agent/telegram-control/projects.json` with absolute paths for projects you explicitly allow:
+
+```json
+{
+  "projects": [
+    { "id": "web-studio", "path": "/home/me/projects/Web-studio-img" },
+    { "id": "unity-cli", "path": "/home/me/projects/unity-ai-cli" }
+  ]
+}
+```
+
+Only project IDs in this file can be selected. Paths are canonicalized before execution. Use these bot commands:
+
+- `/projects` — list allowed projects.
+- `/new <project> <auto|developer|reviewer|tester|debugger> <task>` — prepare a plan. For example: `/new web-studio reviewer Проверь регистрацию и тесты API`.
+- `/tasks` and `/status` — inspect recent tasks and current execution.
+- `/cancel <id>` — cancel a queued task or send SIGTERM to the active Pi process.
+
+Every task first appears as a plan with **Confirm** and **Reject** buttons. Only an explicit confirmation enters the sequential SQLite queue and starts `pi --print` in the selected project directory. Profiles are fixed instructions, not arbitrary shell commands. Task states and output are stored in `~/.pi/agent/telegram-control/tasks.sqlite`; interrupted tasks are marked failed on restart rather than automatically re-run, because they may already have changed files. Inspect the project before retrying.
+
+The controller requires a Node.js version that provides `node:sqlite` (Node 22.5+; use a current Node 22 or 24 release). Keep the existing Telegram decision bot and its `PI_ASK_USER_TELEGRAM_*` settings unchanged for `ask_user` human fallback.
