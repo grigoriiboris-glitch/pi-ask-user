@@ -370,13 +370,15 @@ The controller refuses to start without a valid chat ID and explicit user-ID all
 
 Create `~/.pi/agent/telegram-control/projects.json` with absolute paths for projects you explicitly allow:
 
-```json
+```bash
+cat > ~/.pi/agent/telegram-control/projects.json <<'JSON'
 {
   "projects": [
     { "id": "web-studio", "path": "/home/me/projects/Web-studio-img" },
     { "id": "unity-cli", "path": "/home/me/projects/unity-ai-cli" }
   ]
 }
+JSON
 ```
 
 Only project IDs in this file can be selected. Paths are canonicalized before execution. Use these bot commands:
@@ -384,6 +386,7 @@ Only project IDs in this file can be selected. Paths are canonicalized before ex
 - `/projects` — list allowed projects.
 - `/new <project> <auto|developer|reviewer|tester|debugger> <task>` — prepare a plan. For example: `/new web-studio reviewer Проверь регистрацию и тесты API`.
 - `/tasks` and `/status` — inspect recent tasks and current execution.
+- `/logs <id>` — read saved output and exit code for a task.
 - `/cancel <id>` — cancel a queued task or send SIGTERM to the active Pi process.
 
 Every task first appears as a plan with **Confirm** and **Reject** buttons. Only an explicit confirmation enters the sequential SQLite queue and starts `pi --print` in the selected project directory. Profiles are fixed instructions, not arbitrary shell commands. Task states and output are stored in `~/.pi/agent/telegram-control/tasks.sqlite`; interrupted tasks are marked failed on restart rather than automatically re-run, because they may already have changed files. Inspect the project before retrying.
