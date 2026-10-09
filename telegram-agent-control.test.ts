@@ -12,8 +12,10 @@ describe("Telegram agent command parsing", () => {
       project: "studio", profile: "project", task: "Fix the login flow",
     });
   });
-  test("rejects missing project/task and oversized prompts", () => {
-    expect(parseNewCommand("/new studio")).toBeNull();
+  test("allows selecting a project without starting a task", () => {
+    expect(parseNewCommand("/new studio")).toEqual({ project: "studio", profile: "project", task: "" });
+  });
+  test("rejects oversized prompts", () => {
     expect(parseNewCommand("/new studio developer " + "x".repeat(4001))).toBeNull();
     expect(parseNewCommand("/new studio " + "x".repeat(4001))).toBeNull();
   });
