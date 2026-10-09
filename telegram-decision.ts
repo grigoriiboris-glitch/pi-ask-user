@@ -231,7 +231,7 @@ export async function telegramControlApi<T>(method: string, body: Record<string,
   const token = process.env.PI_ASK_USER_CONTROL_BOT_TOKEN?.trim();
   if (!token) throw new Error("PI_ASK_USER_CONTROL_BOT_TOKEN is not configured");
   const proxyUrl = process.env.PI_ASK_USER_TELEGRAM_PROXY?.trim() || "socks5h://127.0.0.1:2080";
-  return telegramCall<T>(token, method, body, proxyUrl, 15000);
+  return telegramCall<T>(token, method, body, proxyUrl, method === "getUpdates" ? 30000 : 15000);
 }
 
 export async function requestTelegramDecision(input: {
