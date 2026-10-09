@@ -202,7 +202,8 @@ async function textCommand(db: DatabaseSync, chat: number, text: string): Promis
   if (cmd === "/sessions") {
     const projectId = String((db.prepare("SELECT value FROM settings WHERE key='active_project'").get() as any)?.value ?? "");
     if (!projectId || !(await projects()).some(p => p.id === projectId)) return void await send(chat, "Сначала выбери проект командой /new <проект>.");
-    const rows = db.prepare("SELECT key,value FROM settings WHERE key LIKE ? ORDER BY key").all("session_label:" + projectId + ":%") as any[];
+    const prefix = "session_label:" + projectId + ":";
+    const rows = (db.prepare("SELECT key,value FROM settings WHERE substr(key,1,?)=? ORDER BY key").all(prefix.length, prefix) as any[]);
     const active = String((db.prepare("SELECT value FROM settings WHERE key=?").get("active_session:" + projectId) as any)?.value ?? "main");
     const names = new Set<string>(["main", ...rows.map(row => String(row.value))]);
     return void await send(chat, "Сессии проекта " + projectId + " (активная отмечена ▶):\n" + [...names].sort((a,b)=>a.localeCompare(b)).map(name => (name === active ? "▶ " : "• ") + name).join("\n") + "\n\nВыбрать/создать: /session <имя>");
