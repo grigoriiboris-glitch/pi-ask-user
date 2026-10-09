@@ -2731,10 +2731,13 @@ async function executeBatch(
                ? recordActual(id, formatResponseSummary(answer.response))
                : Promise.resolve();
          }));
-         questions.forEach((item, index) => events.answered(
-            { question: item.question, context: item.context, options: item.options },
-            answers[index]!.status === "answered" ? answers[index]!.response : { kind: "freeform", text: "" },
-         ));
+         questions.forEach((item, index) => {
+            const answer = answers[index]!;
+            events.answered(
+               { question: item.question, context: item.context, options: item.options },
+               answer.status === "answered" ? answer.response : { kind: "freeform", text: "" },
+            );
+         });
          return {
             content: [{ type: "text", text: "Decision model answered batch (" + suggestions.length + " questions)." }],
             details: details(answers, false),
