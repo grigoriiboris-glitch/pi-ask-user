@@ -95,7 +95,7 @@ async function runNext(db: DatabaseSync, chat: number): Promise<void> {
 }
 async function textCommand(db: DatabaseSync, chat: number, text: string): Promise<void> {
   const cmd = text.trim();
-  if (cmd === "/start" || cmd === "/help") return void await send(chat, "Команды:\n/projects — проекты\n/new <проект> <auto|developer|reviewer|tester|debugger> <задача> — показать план\n/tasks — очередь и история\n/status — текущая задача\n/cancel <id> — отмена\n\nЗадачи запускаются только после нажатия «Подтвердить».");
+  if (cmd === "/start" || cmd === "/help") return void await send(chat, "Команды:\n/projects — проекты\n/new <проект> <auto|developer|reviewer|tester|debugger> <задача> — показать план\n/tasks — очередь и история\n/status — текущая задача\n/logs <id> — вывод задачи\n/cancel <id> — отмена\n\nЗадачи запускаются только после нажатия «Подтвердить».");
   if (cmd === "/projects") {
     const list = await projects();
     return void await send(chat, list.length ? list.map(p => p.id + " — " + p.path + (p.description ? " (" + p.description + ")" : "")).join("\n") : "Нет доступных проектов. Создай " + projectsFile() + ' с массивом [{"id":"app","path":"/absolute/path"}].');
@@ -107,7 +107,7 @@ async function textCommand(db: DatabaseSync, chat: number, text: string): Promis
   const logs = cmd.match(/^\\/logs\\s+([a-f0-9-]{4,40})$/i);
   if (logs) {
     const t = db.prepare("SELECT status,output,exit_code FROM tasks WHERE id=?").get(logs[1]!) as any;
-    return void await send(chat, t ? "Задача #" + logs[1] + " [" + t.status + "] exit=" + (t.exit_code ?? "n/a") + "\\n\\n" + (t.output || "(вывод пока отсутствует)") : "Задача не найдена.");
+    return void await send(chat, t ? "Задача #" + logs[1] + " [" + t.status + "] exit=" + (t.exit_code ?? "n/a") + "\n\n" + (t.output || "(вывод пока отсутствует)") : "Задача не найдена.");
   }
   if (cmd === "/status") {
     const t = db.prepare("SELECT id,project,profile,prompt FROM tasks WHERE status='running' LIMIT 1").get() as any;
