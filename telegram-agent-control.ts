@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdir, readFile, realpath } from "node:fs/promises";
+import { mkdir, readFile, realpath, readdir } from "node:fs/promises";
 import { chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -29,8 +29,11 @@ export function inferProfile(task: string): Profile {
   return "developer";
 }
 export function parseNewCommand(text: string): { project: string; profile: Profile | "auto"; task: string } | null {
-  const m = text.trim().match(/^\/new\s+([a-zA-Z0-9_-]+)\s+([\s\S]+)$/i);
-  if (!m || !m[2]!.trim() || m[2]!.trim().length > 4000) return null;
+  const cmd = text.trim();
+  const idle = cmd.match(/^\/new\s+([a-zA-Z0-9_-]+)$/i);
+  if (idle) return { project: idle[1]!, profile: "project", task: "" };
+  const m = cmd.match(/^\/new\s+([a-zA-Z0-9_-]+)\s+([\s\S]+)$/i);
+  if (!m || m[2]!.trim().length > 4000) return null;
   const rest = m[2]!.trim();
   const explicit = rest.match(/^(developer|reviewer|tester|debugger|auto)\s+([\s\S]+)$/i);
   const profile = explicit ? explicit[1]!.toLowerCase() as Profile | "auto" : "project";
@@ -38,7 +41,44 @@ export function parseNewCommand(text: string): { project: string; profile: Profi
   if (!task || task.length > 4000) return null;
   return { project: m[1]!, profile, task };
 }
+
 function root(): string { return resolve(process.env.PI_ASK_USER_CONTROL_STATE_DIR?.trim() || join(homedir(), ".pi", "agent", "telegram-control")); }
+function skillSlug(value: string): string { return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
+async function findSkill(projectPath: string, name: string): Promise<string | null> {
+  if (!name.trim() || name.length > 100) return null;
+  const roots = [
+    join(projectPath, ".pi", "skills"), join(projectPath, ".agents", "skills"),
+    join(projectPath, ".claude", "skills"), join(projectPath, "skills"),
+    join(homedir(), ".pi", "agent", "skills"),
+  ];
+  const wanted = skillSlug(name);
+  for (const base of roots) {
+    let baseReal: string;
+    try { baseReal = await realpath(base); } catch { continue; }
+    const visit = async (dir: string, depth: number): Promise<string | null> => {
+      let entries;
+      try { entries = await readdir(dir, { withFileTypes: true }); } catch { return null; }
+      if (entries.some(e => e.isFile() && e.name.toLowerCase() === "skill.md") &&
+          skillSlug(dir.split(/[\\\\/]/).pop() || "") === wanted) {
+        try {
+          const file = await realpath(join(dir, entries.find(e => e.isFile() && e.name.toLowerCase() === "skill.md")!.name));
+          if (file.startsWith(baseReal + "/")) return await readFile(file, "utf8");
+        } catch {}
+      }
+      if (depth <= 0) return null;
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+        const found = await visit(join(dir, entry.name), depth - 1);
+        if (found) return found;
+      }
+      return null;
+    };
+    const found = await visit(baseReal, 3);
+    if (found) return found;
+  }
+  return null;
+}
+
 function projectsFile(): string { return resolve(process.env.PI_ASK_USER_CONTROL_PROJECTS_FILE?.trim() || join(root(), "projects.json")); }
 async function projects(): Promise<Project[]> {
   let raw: any;
@@ -107,7 +147,7 @@ async function runNext(db: DatabaseSync, chat: number): Promise<void> {
 }
 async function textCommand(db: DatabaseSync, chat: number, text: string): Promise<void> {
   const cmd = text.trim();
-  if (cmd === "/start" || cmd === "/help") return void await send(chat, "Команды:\n/projects — проекты\n/new <проект> <задача> — настройки проекта; роль можно указать явно\n/tasks — очередь и история\n/status — текущая задача\n/logs <id> — вывод задачи\n/cancel <id> — отмена\n\nЗадачи запускаются только после нажатия «Подтвердить».");
+  if (cmd === "/start" || cmd === "/help") return void await send(chat, "Команды:\n/projects — проекты\n/new <проект> — выбрать проект без запуска\n/new <проект> <задача> — задача, роль необязательна\n/task <задача> — задача в выбранном проекте\n/skill <имя> [задача] — любой найденный SKILL.md\n/tasks — очередь и история\n/status — текущая задача\n/logs <id> — вывод задачи\n/cancel <id> — отмена\n\nПеред запуском нужен клик «Подтвердить».");
   if (cmd === "/projects") {
     const list = await projects();
     return void await send(chat, list.length ? list.map(p => p.id + " — " + p.path + (p.description ? " (" + p.description + ")" : "")).join("\n") : "Нет доступных проектов. Создай " + projectsFile() + ' с массивом [{"id":"app","path":"/absolute/path"}].');
@@ -133,13 +173,40 @@ async function textCommand(db: DatabaseSync, chat: number, text: string): Promis
     return void await send(chat, Number(res.changes) ? "Задача #" + id + " отменена." : "Активную или неизвестную задачу отменить не удалось.");
   }
   const parsed = parseNewCommand(cmd);
-  if (!parsed) return void await send(chat, "Формат: /new <проект> <auto|developer|reviewer|tester|debugger> <задача>. Сначала выполни /projects.");
-  const project = (await projects()).find(p => p.id === parsed.project);
+  const taskCmd = cmd.match(/^\/task\s+([\s\S]+)$/i);
+  const skillCmd = cmd.match(/^\/skill\s+([^\s]+)(?:\s+([\s\S]+))?$/i);
+  if (!parsed && !taskCmd && !skillCmd) return void await send(chat, "Формат: /new <проект> [роль] <задача>, /task <задача> или /skill <имя> [задача].");
+  if (parsed) {
+    const selected = (await projects()).find(p => p.id === parsed.project);
+    if (!selected) return void await send(chat, "Проект не найден в разрешённом списке. Выполни /projects.");
+    if (!parsed.task) {
+      db.prepare("INSERT INTO settings(key,value) VALUES('active_project',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(selected.id);
+      return void await send(chat, "📂 Выбран проект: " + selected.id + "\n" + selected.path + "\nАгент пока не запущен. Отправь /task <задача> или /skill <имя> [задача].");
+    }
+  }
+  let projectId = parsed?.project;
+  let task = parsed?.task ?? "";
+  let profile: Profile = "project";
+  if (taskCmd) {
+    projectId = String((db.prepare("SELECT value FROM settings WHERE key='active_project'").get() as any)?.value ?? "");
+    task = taskCmd[1]!.trim();
+  } else if (skillCmd) {
+    projectId = String((db.prepare("SELECT value FROM settings WHERE key='active_project'").get() as any)?.value ?? "");
+    const selected = (await projects()).find(p => p.id === projectId);
+    if (!selected) return void await send(chat, "Сначала выбери проект командой /new <проект>.");
+    const skill = await findSkill(selected.path, skillCmd[1]!);
+    if (!skill) return void await send(chat, "Навык «" + skillCmd[1] + "» не найден. Проверены .pi/skills, .agents/skills, .claude/skills, skills проекта и ~/.pi/agent/skills.");
+    task = "Follow this skill's instructions and workflow before implementing anything.\n\n<skill>\n" + skill + "\n</skill>\n\nUser task: " + (skillCmd[2]?.trim() || "Start by following the skill's opening workflow and ask me for any required input. Do not assume an implementation task before the skill establishes one.");
+  } else if (!parsed) {
+    return void await send(chat, "Формат: /task <задача> или /skill <имя> [задача].");
+  }
+  const project = (await projects()).find(p => p.id === projectId);
   if (!project) return void await send(chat, "Проект не найден в разрешённом списке. Выполни /projects.");
-  const profile = parsed.profile === "auto" ? inferProfile(parsed.task) : parsed.profile;
+  if (!task || task.length > 4000) return void await send(chat, "Задача должна содержать от 1 до 4000 символов.");
+  if (parsed && parsed.task) profile = parsed.profile === "auto" ? inferProfile(parsed.task) : parsed.profile;
   const id = randomUUID().slice(0, 8), ts = now();
-  db.prepare("INSERT INTO tasks(id,project,project_path,profile,prompt,status,created_at,updated_at) VALUES(?,?,?,?,?,'awaiting_confirmation',?,?)").run(id, project.id, project.path, profile, parsed.task, ts, ts);
-  await send(chat, "🧭 План задачи #" + id + "\nПроект: " + project.id + "\nПрофиль: " + profile + "\nЗадача: " + parsed.task + "\n\nПосле подтверждения задача попадёт в последовательную SQLite-очередь и запустится локально командой pi --print. До подтверждения процесс не запускается.", keyboard(id));
+  db.prepare("INSERT INTO tasks(id,project,project_path,profile,prompt,status,created_at,updated_at) VALUES(?,?,?,?,?,'awaiting_confirmation',?,?)").run(id, project.id, project.path, profile, task, ts, ts);
+  await send(chat, "🧭 План задачи #" + id + "\nПроект: " + project.id + "\nРежим: " + (skillCmd ? "навык " + skillCmd[1] : profile) + "\nЗадача: " + short(task, 1000) + "\n\nПосле подтверждения задача попадёт в очередь и запустится локально. До подтверждения Pi не запускается.", keyboard(id));
 }
 async function callback(db: DatabaseSync, chat: number, query: any): Promise<void> {
   await telegramControlApi("answerCallbackQuery", { callback_query_id: query.id }).catch(() => undefined);
