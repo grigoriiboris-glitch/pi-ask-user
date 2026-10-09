@@ -78,7 +78,14 @@ async function getUpdates(): Promise<any[]> {
   longPoll = { ...current, ts: String(data.ts) };
   const updates: any[] = [];
   for (const item of data.updates ?? []) {
-    const [type, event] = item as [string, any];
+    let type: string;
+    let event: any;
+    if (Array.isArray(item)) {
+      [type, event] = item;
+    } else {
+      type = String(item?.type ?? "");
+      event = item?.object && typeof item.object === "object" ? { ...item.object, event_id: item.event_id ?? item.object.event_id } : item?.object;
+    }
     if (type === "message_new") {
       const message = event?.message ?? event;
       if (typeof message?.text !== "string") continue;
