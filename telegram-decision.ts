@@ -181,7 +181,7 @@ export function formatDecisionAudit(input: TelegramDecisionAudit): string {
     ? Math.round(Math.max(0, Math.min(1, input.confidence)) * 100)
     : 0;
   const threshold = Math.round(Math.max(0, Math.min(1, input.threshold)) * 100);
-  const automatic = input.mode === "auto" && confidence >= threshold;
+  const automatic = input.mode === "auto" && input.suggestion !== "NEEDS_HUMAN" && confidence >= threshold;
   const clip = (value: string, max: number) => value.length > max ? value.slice(0, max - 1) + "…" : value;
   return [
     "📊 Решение ИИ · анализ",
