@@ -186,8 +186,8 @@ async function runNext(db: DatabaseSync, chat: number): Promise<void> {
     const status = current?.status === "cancelled" ? "cancelled" : failed || code !== 0 ? "failed" : "completed";
     update(db, t.id, status, output, code);
     if (status === "completed") db.prepare("INSERT INTO settings(key,value) VALUES(?, '1') ON CONFLICT(key) DO UPDATE SET value='1'").run(sessionKey);
-    const report = output.length > 3600 ? "…(начало вывода сокращено)…\\n" + output.slice(-3600) : output;
-    await send(chat, (status === "completed" ? "✅" : status === "cancelled" ? "⏹" : "❌") + " Задача #" + t.id + ": " + status + " (exit " + code + ")\\n\\n" + (report || "(нет текстового вывода)"));
+    const report = output.length > 3600 ? "…(начало вывода сокращено)…\n" + output.slice(-3600) : output;
+    await send(chat, (status === "completed" ? "✅" : status === "cancelled" ? "⏹" : "❌") + " Задача #" + t.id + ": " + status + " (exit " + code + ")\n\n" + (report || "(нет текстового вывода)"));
     child = undefined; activeId = undefined; void runNext(db, chat);
   };
   proc.once("error", async e => { output += "\n" + e.message; await finish(-1, true); });
