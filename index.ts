@@ -2740,6 +2740,7 @@ async function executeBatch(
                   allowMultiple: item.allowMultiple,
                   allowFreeform: item.allowFreeform,
                   signal,
+                  timeoutMs: params.timeout,
                });
                if (human?.kind === "selection") response = { kind: "selection", selections: human.selections };
                else if (human?.kind === "freeform") response = { kind: "freeform", text: human.text };
