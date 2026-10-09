@@ -86,7 +86,9 @@ async function runNext(db: DatabaseSync, chat: number): Promise<void> {
   }
   update(db, t.id, "running");
   await send(chat, "⏳ Запускаю #" + t.id + ": " + t.project + "/" + t.profile);
-  const prompt = ROLES[t.profile as Profile] + "\n\nTask:\n" + t.prompt + "\n\nDo not expose secrets or run destructive commands. Stay within the selected project; if a risky action is needed, stop and report it.";
+  const prompt = t.profile === "project"
+    ? t.prompt
+    : ROLES[t.profile as Exclude<Profile, "project">] + "\n\nTask:\n" + t.prompt + "\n\nDo not expose secrets or run destructive commands. Stay within the selected project; if a risky action is needed, stop and report it.";
   let output = "", settled = false;
   const proc = spawn(process.env.PI_ASK_USER_CONTROL_PI_BIN?.trim() || "pi", ["--print", prompt], { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"], env: process.env });
   child = proc;
@@ -105,7 +107,7 @@ async function runNext(db: DatabaseSync, chat: number): Promise<void> {
 }
 async function textCommand(db: DatabaseSync, chat: number, text: string): Promise<void> {
   const cmd = text.trim();
-  if (cmd === "/start" || cmd === "/help") return void await send(chat, "Команды:\n/projects — проекты\n/new <проект> <auto|[developer|reviewer|tester|debugger] <задача> — показать план\n/tasks — очередь и история\n/status — текущая задача\n/logs <id> — вывод задачи\n/cancel <id> — отмена\n\nЗадачи запускаются только после нажатия «Подтвердить».");
+  if (cmd === "/start" || cmd === "/help") return void await send(chat, "Команды:\n/projects — проекты\n/new <проект> <задача> — настройки проекта; роль можно указать явно\n/tasks — очередь и история\n/status — текущая задача\n/logs <id> — вывод задачи\n/cancel <id> — отмена\n\nЗадачи запускаются только после нажатия «Подтвердить».");
   if (cmd === "/projects") {
     const list = await projects();
     return void await send(chat, list.length ? list.map(p => p.id + " — " + p.path + (p.description ? " (" + p.description + ")" : "")).join("\n") : "Нет доступных проектов. Создай " + projectsFile() + ' с массивом [{"id":"app","path":"/absolute/path"}].');
