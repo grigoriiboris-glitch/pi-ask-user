@@ -149,7 +149,7 @@ async function runNext(db: DatabaseSync, chat: number): Promise<void> {
 }
 async function textCommand(db: DatabaseSync, chat: number, text: string): Promise<void> {
   const cmd = text.trim();
-  if (cmd === "/start" || cmd === "/help") return void await send(chat, "Команды:\n/projects — проекты\n/new <проект> — выбрать проект без запуска\n/new <проект> <задача> — задача, роль необязательна\n/task <задача> — задача в выбранном проекте\n/skill <имя> [задача] — любой найденный SKILL.md\n/tasks — очередь и история\n/status — текущая задача\n/logs <id> — вывод задачи\n/cancel <id> — отмена\n\nПеред запуском нужен клик «Подтвердить».");
+  if (cmd === "/start" || cmd === "/help") return void await send(chat, "Команды:\n/projects — проекты\n/new <проект> — открыть сессию проекта после подтверждения\n/new <проект> <задача> — задача, роль необязательна\n/task <задача> — задача в выбранном проекте\n/skill <имя> [задача] — любой найденный SKILL.md\n/tasks — очередь и история\n/status — текущая задача\n/logs <id> — вывод задачи\n/cancel <id> — отмена\n\nПеред запуском нужен клик «Подтвердить».");
   if (cmd === "/projects") {
     const list = await projects();
     return void await send(chat, list.length ? list.map(p => p.id + " — " + p.path + (p.description ? " (" + p.description + ")" : "")).join("\n") : "Нет доступных проектов. Создай " + projectsFile() + ' с массивом [{"id":"app","path":"/absolute/path"}].');
