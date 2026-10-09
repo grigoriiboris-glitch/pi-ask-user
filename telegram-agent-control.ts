@@ -7,7 +7,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { telegramControlApi } from "./telegram-decision";
 
-type Profile = "developer" | "reviewer" | "tester" | "debugger";
+type Profile = "project" | "developer" | "reviewer" | "tester" | "debugger";
 type Project = { id: string; path: string; description?: string };
 const ROLES: Record<Profile, string> = {
   developer: "Implement the request with the smallest correct change and run relevant tests.",
@@ -29,9 +29,14 @@ export function inferProfile(task: string): Profile {
   return "developer";
 }
 export function parseNewCommand(text: string): { project: string; profile: Profile | "auto"; task: string } | null {
-  const m = text.trim().match(/^\/new\s+([a-zA-Z0-9_-]+)\s+(developer|reviewer|tester|debugger|auto)\s+([\s\S]+)$/i);
-  if (!m || !m[3]!.trim() || m[3]!.trim().length > 4000) return null;
-  return { project: m[1]!, profile: m[2]!.toLowerCase() as Profile | "auto", task: m[3]!.trim() };
+  const m = text.trim().match(/^\/new\s+([a-zA-Z0-9_-]+)\s+([\s\S]+)$/i);
+  if (!m || !m[2]!.trim() || m[2]!.trim().length > 4000) return null;
+  const rest = m[2]!.trim();
+  const explicit = rest.match(/^(developer|reviewer|tester|debugger|auto)\s+([\s\S]+)$/i);
+  const profile = explicit ? explicit[1]!.toLowerCase() as Profile | "auto" : "project";
+  const task = explicit ? explicit[2]!.trim() : rest;
+  if (!task || task.length > 4000) return null;
+  return { project: m[1]!, profile, task };
 }
 function root(): string { return resolve(process.env.PI_ASK_USER_CONTROL_STATE_DIR?.trim() || join(homedir(), ".pi", "agent", "telegram-control")); }
 function projectsFile(): string { return resolve(process.env.PI_ASK_USER_CONTROL_PROJECTS_FILE?.trim() || join(root(), "projects.json")); }
@@ -100,7 +105,7 @@ async function runNext(db: DatabaseSync, chat: number): Promise<void> {
 }
 async function textCommand(db: DatabaseSync, chat: number, text: string): Promise<void> {
   const cmd = text.trim();
-  if (cmd === "/start" || cmd === "/help") return void await send(chat, "Команды:\n/projects — проекты\n/new <проект> <auto|developer|reviewer|tester|debugger> <задача> — показать план\n/tasks — очередь и история\n/status — текущая задача\n/logs <id> — вывод задачи\n/cancel <id> — отмена\n\nЗадачи запускаются только после нажатия «Подтвердить».");
+  if (cmd === "/start" || cmd === "/help") return void await send(chat, "Команды:\n/projects — проекты\n/new <проект> <auto|[developer|reviewer|tester|debugger] <задача> — показать план\n/tasks — очередь и история\n/status — текущая задача\n/logs <id> — вывод задачи\n/cancel <id> — отмена\n\nЗадачи запускаются только после нажатия «Подтвердить».");
   if (cmd === "/projects") {
     const list = await projects();
     return void await send(chat, list.length ? list.map(p => p.id + " — " + p.path + (p.description ? " (" + p.description + ")" : "")).join("\n") : "Нет доступных проектов. Создай " + projectsFile() + ' с массивом [{"id":"app","path":"/absolute/path"}].');
