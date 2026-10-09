@@ -2821,7 +2821,10 @@ function formatBatchResult(theme: Theme, details: AskBatchDetails, expanded: boo
 type DecisionMode = "off" | "ask" | "auto";
 type DecisionSuggestion = { option: string; confidence: number; reason: string };
 
+let runtimeDecisionMode: DecisionMode | undefined;
+
 function getDecisionMode(): DecisionMode {
+   if (runtimeDecisionMode) return runtimeDecisionMode;
    const value = process.env.PI_ASK_USER_DECISION_MODE?.trim().toLowerCase();
    return value === "auto" || value === "ask" ? value : "off";
 }
@@ -2916,7 +2919,8 @@ export default function(pi: ExtensionAPI) {
             ctx.ui.notify("Usage: /decision auto|ask|off|status. Persist mode with PI_ASK_USER_DECISION_MODE.", "warning");
             return;
          }
-         ctx.ui.notify("Set PI_ASK_USER_DECISION_MODE=" + value + " in the environment and restart Pi. This command reports the setting but does not persist environment changes.", "info");
+         runtimeDecisionMode = value as DecisionMode;
+         ctx.ui.notify("ask_user decision mode set to " + value + " for this Pi session.", "info");
       },
    });
 
