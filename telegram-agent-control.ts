@@ -59,7 +59,7 @@ async function findSkill(projectPath: string, name: string): Promise<string | nu
       let entries;
       try { entries = await readdir(dir, { withFileTypes: true }); } catch { return null; }
       if (entries.some(e => e.isFile() && e.name.toLowerCase() === "skill.md") &&
-          skillSlug(dir.split(/[\\\\/]/).pop() || "") === wanted) {
+          skillSlug(dir.split(/[\\/]/).pop() || "") === wanted) {
         try {
           const file = await realpath(join(dir, entries.find(e => e.isFile() && e.name.toLowerCase() === "skill.md")!.name));
           if (file.startsWith(baseReal + "/")) return await readFile(file, "utf8");
