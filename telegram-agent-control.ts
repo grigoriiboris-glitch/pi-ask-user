@@ -55,7 +55,12 @@ async function dbOpen(): Promise<DatabaseSync> {
   return db;
 }
 async function send(chat: number, text: string, reply_markup?: unknown): Promise<any> {
-  return telegramControlApi("sendMessage", { chat_id: chat, text: short(text, 3900), disable_web_page_preview: true, ...(reply_markup ? { reply_markup } : {}) });
+  try {
+    return await telegramControlApi("sendMessage", { chat_id: chat, text: short(text, 3900), disable_web_page_preview: true, ...(reply_markup ? { reply_markup } : {}) });
+  } catch {
+    // Telegram outages must not strand a local Pi process or stop the queue.
+    return { message_id: 0 };
+  }
 }
 function update(db: DatabaseSync, id: string, status: string, output?: string, code?: number) {
   db.prepare("UPDATE tasks SET status=?, updated_at=?, output=COALESCE(?,output), exit_code=COALESCE(?,exit_code) WHERE id=?").run(status, now(), output ?? null, code ?? null, id);
