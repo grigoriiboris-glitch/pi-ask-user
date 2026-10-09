@@ -36,6 +36,7 @@
   "files": [
     "index.ts",
     "single-select-layout.ts",
+    "decision-history.ts",
     "skills",
     "README.md",
     "LICENSE"
