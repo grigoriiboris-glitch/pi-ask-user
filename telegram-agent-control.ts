@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { telegramControlApi } from "./telegram-decision";
+import { vkControlApi } from "./vk-agent-control";
 import { readDecisionHistory, rateDecision, type DecisionRating } from "./decision-history";
 
 type Profile = "project" | "developer" | "reviewer" | "tester" | "debugger";
@@ -19,6 +20,10 @@ const ROLES: Record<Exclude<Profile, "project">, string> = {
 let started = false;
 let child: ChildProcess | undefined;
 let activeId: string | undefined;
+const controlPlatform = () => (process.env.PI_ASK_USER_CONTROL_PLATFORM?.trim().toLowerCase() || "telegram");
+async function controlApi<T>(method: string, body: Record<string, unknown>): Promise<T> {
+  return controlPlatform() === "vk" ? vkControlApi<T>(method, body) : telegramControlApi<T>(method, body);
+}
 const now = () => new Date().toISOString();
 const short = (s: string, n = 3500) => s.length > n ? s.slice(0, n - 1) + "…" : s;
 
@@ -145,7 +150,7 @@ async function dbOpen(): Promise<DatabaseSync> {
 }
 async function send(chat: number, text: string, reply_markup?: unknown): Promise<any> {
   try {
-    return await telegramControlApi("sendMessage", { chat_id: chat, text: short(text, 3900), disable_web_page_preview: true, ...(reply_markup ? { reply_markup } : {}) });
+    return await controlApi("sendMessage", { chat_id: chat, text: short(text, 3900), disable_web_page_preview: true, ...(reply_markup ? { reply_markup } : {}) });
   } catch {
     // Telegram outages must not strand a local Pi process or stop the queue.
     return { message_id: 0 };
@@ -320,7 +325,7 @@ async function textCommand(db: DatabaseSync, chat: number, text: string): Promis
   await send(chat, "🧭 План задачи #" + id + "\nПроект: " + project.id + "\nРежим: " + (openingSession ? "открыть сессию" : skillCmd ? "навык " + skillCmd[1] : profile) + "\nЗадача: " + (openingSession ? "Подготовить контекст проекта без изменений файлов." : short(task, 1000)) + "\n\nПосле подтверждения задача попадёт в очередь и запустится локально. До подтверждения Pi не запускается.", keyboard(id));
 }
 async function callback(db: DatabaseSync, chat: number, query: any): Promise<void> {
-  await telegramControlApi("answerCallbackQuery", { callback_query_id: query.id }).catch(() => undefined);
+  await controlApi("answerCallbackQuery", { callback_query_id: query.id }).catch(() => undefined);
   const m = String(query.data ?? "").match(/^pac:(yes|no):([a-f0-9-]{4,40})$/);
   if (!m) return;
   const t = db.prepare("SELECT status FROM tasks WHERE id=?").get(m[2]) as any;
@@ -330,10 +335,18 @@ async function callback(db: DatabaseSync, chat: number, query: any): Promise<voi
   await send(chat, "Задача #" + m[2] + " подтверждена и добавлена в очередь.");
   void runNext(db, chat);
 }
-export function startTelegramAgentControl(): void {
-  if (started || !process.env.PI_ASK_USER_CONTROL_BOT_TOKEN?.trim() || !process.env.PI_ASK_USER_CONTROL_CHAT_ID?.trim()) return;
-  const chat = Number(process.env.PI_ASK_USER_CONTROL_CHAT_ID);
-  const allowedText = process.env.PI_ASK_USER_CONTROL_USER_ID?.trim();
+export function startAgentControl(): void {
+  const platform = controlPlatform();
+  if (started || !["telegram", "vk"].includes(platform)) return;
+  const configured = platform === "vk"
+    ? Boolean(process.env.PI_ASK_USER_CONTROL_VK_TOKEN?.trim() && process.env.PI_ASK_USER_CONTROL_VK_GROUP_ID?.trim())
+    : Boolean(process.env.PI_ASK_USER_CONTROL_BOT_TOKEN?.trim() && process.env.PI_ASK_USER_CONTROL_CHAT_ID?.trim());
+  if (!configured) return;
+  const allowedText = (platform === "vk" ? process.env.PI_ASK_USER_CONTROL_VK_USER_ID : process.env.PI_ASK_USER_CONTROL_USER_ID)?.trim();
+  const chatText = platform === "vk"
+    ? (process.env.PI_ASK_USER_CONTROL_VK_PEER_ID?.trim() || allowedText)
+    : process.env.PI_ASK_USER_CONTROL_CHAT_ID?.trim();
+  const chat = Number(chatText);
   const allowedUser = allowedText ? Number(allowedText) : undefined;
   if (!Number.isSafeInteger(chat) || !allowedText || !Number.isSafeInteger(allowedUser)) return;
   started = true;
@@ -342,13 +355,14 @@ export function startTelegramAgentControl(): void {
     try { await (await import("node:fs/promises")).chmod(root(), 0o700); } catch {}
     const db = await dbOpen();
     db.prepare("UPDATE tasks SET status='failed',output='Pi exited or restarted before the task result was saved; inspect the project before retrying.',updated_at=? WHERE status='running'").run(now());
-    let offset = Number((db.prepare("SELECT value FROM settings WHERE key='telegram_offset'").get() as any)?.value ?? 0);
+    const offsetKey = platform === "vk" ? "vk_offset" : "telegram_offset";
+    let offset = Number((db.prepare("SELECT value FROM settings WHERE key=?").get(offsetKey) as any)?.value ?? 0);
     while (true) {
       try {
-        const updates = await telegramControlApi<any[]>("getUpdates", { offset, timeout: 20, allowed_updates: ["message", "callback_query"] });
+        const updates = await controlApi<any[]>("getUpdates", platform === "vk" ? {} : { offset, timeout: 20, allowed_updates: ["message", "callback_query"] });
         for (const u of updates) {
           offset = Math.max(offset, Number(u.update_id) + 1);
-          db.prepare("INSERT INTO settings(key,value) VALUES('telegram_offset',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(offset));
+          db.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(offsetKey, String(offset));
           const q = u.callback_query, m = u.message;
           if ((q?.message?.chat?.id ?? m?.chat?.id) !== chat) continue;
           if (allowedUser !== undefined && (q?.from?.id ?? m?.from?.id) !== allowedUser) continue;
