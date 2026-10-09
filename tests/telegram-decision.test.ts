@@ -26,6 +26,26 @@ afterEach(() => {
 });
 
 describe("Telegram human fallback", () => {
+  test("formats every decision with confidence percentage and outcome status", () => {
+    const { formatDecisionAudit } = require("../telegram-decision") as typeof import("../telegram-decision");
+    const message = formatDecisionAudit({
+      question: "Which database?",
+      context: "Small single-user app",
+      options: ["SQLite", "Postgres"],
+      model: "flash-model",
+      mode: "auto",
+      suggestion: "SQLite",
+      confidence: 0.87,
+      reason: "Simpler deployment",
+      threshold: 0.85,
+    });
+    expect(message).toContain("Уверенность: 87%");
+    expect(message).toContain("применено автоматически");
+    expect(message).toContain("Решение ИИ: SQLite");
+    expect(message).toContain("Модель: flash-model");
+  });
+
+
   test("is inactive when bot credentials are missing", async () => {
     expect(await requestTelegramDecision({
       question: "Choose?",
