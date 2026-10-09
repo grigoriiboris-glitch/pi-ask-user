@@ -178,6 +178,28 @@ Oversized context collapses behind a one-line summary so the question and choice
 
 `ctrl+e` still toggles from whichever state the prompt opened in.
 
+
+### Telegram human fallback for uncertain decisions
+
+When decision mode is `auto`, the decision model answers only when its confidence meets `PI_ASK_USER_DECISION_THRESHOLD` (default `0.85`). If confidence is lower or the model says it needs a human, `ask_user` sends the question and inline answer buttons to Telegram, then returns your choice to the agent. Batch questions use Telegram only for unresolved items; remaining questions fall back to Pi's local UI.
+
+Create a Telegram bot with BotFather, open a chat with it, and configure the environment in the same shell that launches Pi:
+
+```bash
+export PI_ASK_USER_TELEGRAM_BOT_TOKEN="123456:replace-with-your-bot-token"
+export PI_ASK_USER_TELEGRAM_CHAT_ID="123456789"
+# Optional: restrict callback/text answers to this Telegram user ID (recommended for groups)
+export PI_ASK_USER_TELEGRAM_USER_ID="123456789"
+# SOCKS5 is mandatory for Bot API requests; default is local port 2080
+export PI_ASK_USER_TELEGRAM_PROXY="socks5h://127.0.0.1:2080"
+# Optional: wait up to 5 minutes for an answer (1000–3600000 ms)
+export PI_ASK_USER_TELEGRAM_TIMEOUT_MS="300000"
+```
+
+The extension sends every Telegram Bot API request through the SOCKS5 proxy at `127.0.0.1:2080` by default. It does not silently bypass the proxy. Use a dedicated bot token for this extension because Telegram `getUpdates` polling consumes updates for that bot. Keep the token private. If the bot, chat ID, proxy, or network is unavailable, or the question times out, the extension falls back to Pi's local question UI.
+
+Single-choice questions use inline buttons; multi-select questions have a **Готово** button; freeform answers are accepted as a reply to the bot's prompt. Telegram answers are stored in the existing decision history alongside the AI suggestion.
+
 ### Shortcuts
 
 Effective order for both `overlayToggleKey` and `commentToggleKey`:
