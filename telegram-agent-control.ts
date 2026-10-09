@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { telegramControlApi } from "./telegram-decision";
+import { readDecisionHistory, rateDecision, type DecisionRating } from "./decision-history";
 
 type Profile = "project" | "developer" | "reviewer" | "tester" | "debugger";
 type Project = { id: string; path: string; description?: string };
@@ -27,6 +28,10 @@ export function inferProfile(task: string): Profile {
   if (/test|тест|покрой тестами|проверить работу/.test(s)) return "tester";
   if (/debug|bug|ошиб|не работает|падает|исправь баг/.test(s)) return "debugger";
   return "developer";
+}
+export function parseVerifyCommand(text: string): string | null {
+  const parts = text.trim().split(/\s+/);
+  return parts.length === 2 && parts[0] === "/verify" && /^[a-f0-9-]{4,40}$/i.test(parts[1]!) ? parts[1]! : null;
 }
 export function parseSessionCommand(text: string): { name: string; slug: string } | null {
   const match = text.trim().match(/^\/session\s+([\w -]{1,48})$/i);
@@ -165,7 +170,7 @@ async function runNext(db: DatabaseSync, chat: number): Promise<void> {
   }
   update(db, t.id, "running");
   await send(chat, "⏳ Запускаю #" + t.id + ": " + t.project + "/" + t.profile);
-  const resultInstructions = "\n\nFinal response requirements: briefly state what you did, list important files changed, and report the exact tests/checks run with their results. If you could not run checks, say so explicitly. Do not claim tests passed unless they actually ran. Do not expose secrets.";
+  const resultInstructions = "\n\nFinal response requirements: report changed files and exact checks actually run, including commands and pass/fail results. Separate verified facts from assumptions; never claim a test, build, CI, or runtime check passed unless it ran and passed. List failed and unavailable checks explicitly. For UI work, inspect the rendered UI at runtime when possible: verify modal fields remain above/in front of the modal content, select/dropdown menus are visible and not clipped, and key controls are readable and usable; report screenshots or other evidence if available. If verification is not possible, say so. Do not expose secrets.";
   const prompt = (t.profile === "project"
     ? t.prompt
     : ROLES[t.profile as Exclude<Profile, "project">] + "\n\nTask:\n" + t.prompt + "\n\nDo not run destructive commands. Stay within the selected project; if a risky action is needed, stop and report it.") + resultInstructions;
@@ -187,7 +192,8 @@ async function runNext(db: DatabaseSync, chat: number): Promise<void> {
     update(db, t.id, status, output, code);
     if (status === "completed") db.prepare("INSERT INTO settings(key,value) VALUES(?, '1') ON CONFLICT(key) DO UPDATE SET value='1'").run(sessionKey);
     const report = output.length > 3600 ? "…(начало вывода сокращено)…\n" + output.slice(-3600) : output;
-    await send(chat, (status === "completed" ? "✅" : status === "cancelled" ? "⏹" : "❌") + " Задача #" + t.id + ": " + status + " (exit " + code + ")\n\n" + (report || "(нет текстового вывода)"));
+    const statusLabel = status === "completed" ? "completed (процесс успешен; результат отдельно не проверен)" : status;
+    await send(chat, (status === "completed" ? "✅" : status === "cancelled" ? "⏹" : "❌") + " Задача #" + t.id + ": " + statusLabel + " (exit " + code + ")\n" + (status === "completed" ? "Для независимой проверки: /verify " + t.id + "\n" : "") + "\n" + (report || "(нет текстового вывода)"));
     child = undefined; activeId = undefined; void runNext(db, chat);
   };
   proc.once("error", async e => { output += "\n" + e.message; await finish(-1, true); });
@@ -195,7 +201,35 @@ async function runNext(db: DatabaseSync, chat: number): Promise<void> {
 }
 async function textCommand(db: DatabaseSync, chat: number, text: string): Promise<void> {
   const cmd = text.trim();
-  if (cmd === "/start" || cmd === "/help") return void await send(chat, "Команды:\n/projects — проекты\n/new <проект> — открыть проект после подтверждения\n/new <проект> <задача> — задача, роль необязательна\n/sessions — сессии активного проекта\n/session <имя> — выбрать или создать сессию\n/task <задача> — задача в выбранном проекте\n/skills — список доступных навыков\n/skill <имя> [задача] — запустить навык\n/tasks — очередь и история\n/status — текущая задача\n/logs <id> — вывод задачи\n/cancel <id> — отмена\n\nПеред запуском нужен клик «Подтвердить».");
+  if (cmd === "/start" || cmd === "/help") return void await send(chat, "Команды:\n/decisions — последние решения ИИ\n/review-decisions — решения без оценки\n/decision <id> — детали решения\n/rate-decision <id> correct|incorrect|unsure — оценить решение\n/verify <id> — независимая проверка завершённой задачи\n/projects — проекты\n/new <проект> — открыть проект после подтверждения\n/new <проект> <задача> — задача, роль необязательна\n/sessions — сессии активного проекта\n/session <имя> — выбрать или создать сессию\n/task <задача> — задача в выбранном проекте\n/skills — список доступных навыков\n/skill <имя> [задача] — запустить навык\n/tasks — очередь и история\n/status — текущая задача\n/logs <id> — вывод задачи\n/cancel <id> — отмена\n\nПеред запуском нужен клик «Подтвердить».");
+  const verifyId = parseVerifyCommand(cmd);
+  if (verifyId) {
+    const original = db.prepare("SELECT id,project,project_path,prompt,status,output,exit_code FROM tasks WHERE id=?").get(verifyId) as any;
+    if (!original) return void await send(chat, "Задача #" + verifyId + " не найдена.");
+    if (original.status !== "completed" && original.status !== "failed") return void await send(chat, "Проверять можно только завершённую задачу (completed/failed). Текущий статус: " + original.status);
+    const verifyPrompt = "Independently verify the result of task #" + verifyId + ". Original task: " + original.prompt + "\nOriginal process status: " + original.status + ", exit code: " + (original.exit_code ?? "unknown") + "\nOriginal agent report/log tail:\n" + String(original.output || "(no output)").slice(-8000) + "\n\nVerification-only task: do not edit files or implement fixes. Inspect the actual working tree and relevant diff, run appropriate available tests/build/checks, and inspect runtime/UI behavior when applicable. For UI, explicitly verify modal layering and that select/dropdown lists are visible and not clipped. Return a clear verdict: PASS, FAIL, or INCONCLUSIVE, with concrete evidence, exact commands and results, files inspected, and checks that could not run. Exit code 0 of the original task is not proof that its requested behavior works.";
+    const id = randomUUID().slice(0, 8), ts = now();
+    db.prepare("INSERT INTO tasks(id,project,project_path,profile,prompt,status,created_at,updated_at) VALUES(?,?,?,?,?,'awaiting_confirmation',?,?)").run(id, original.project, original.project_path, "tester", verifyPrompt, ts, ts);
+    return void await send(chat, "🔎 План независимой проверки #" + id + "\nИсходная задача: #" + verifyId + " [" + original.status + "]\nПроект: " + original.project + "\nРежим: tester (без изменений кода)\n\nПроверю фактический diff, тесты и UI, если применимо. До подтверждения агент не запускается.", keyboard(id));
+  }
+  if (cmd === "/decisions" || cmd === "/review-decisions") {
+    const records = await readDecisionHistory();
+    const pending = cmd === "/review-decisions";
+    const shown = (pending ? records.filter(record => !record.rating) : records).slice(0, 8);
+    if (!shown.length) return void await send(chat, pending ? "Нет решений, ожидающих оценки." : "Журнал решений пуст.");
+    return void await send(chat, shown.map(record => "#" + record.id + " [" + record.mode + "] " + Math.round(record.confidence * 100) + "%\n" + record.question + "\nИИ: " + record.suggestion + "\nФакт: " + (record.actual ?? "не записан") + " | оценка: " + (record.rating ?? "не оценено") + "\nОценить: /rate-decision " + record.id + " correct|incorrect|unsure").join("\n\n"));
+  }
+  const detailParts = cmd.split(/\s+/);
+  if (detailParts.length === 2 && detailParts[0] === "/decision" && /^[a-f0-9-]{4,40}$/i.test(detailParts[1]!)) {
+    const record = (await readDecisionHistory()).find(item => item.id === detailParts[1]);
+    return void await send(chat, record ? "Решение #" + record.id + " [" + record.mode + "]\nВопрос: " + record.question + "\nКонтекст: " + (record.context || "—") + "\nВарианты: " + (record.options.join(" | ") || "—") + "\nМодель: " + record.model + "; уверенность: " + Math.round(record.confidence * 100) + "%\nОтвет модели: " + record.suggestion + "\nОбоснование: " + record.reason + "\nФактический ответ: " + (record.actual ?? "не записан") + "\nОценка: " + (record.rating ?? "не оценено") : "Решение не найдено.");
+  }
+  const rateParts = cmd.split(/\s+/);
+  if (rateParts.length === 3 && rateParts[0] === "/rate-decision" && /^[a-f0-9-]{4,40}$/i.test(rateParts[1]!) && ["correct", "incorrect", "unsure"].includes(rateParts[2]!.toLowerCase())) {
+    const rating = rateParts[2]!.toLowerCase() as DecisionRating;
+    const ok = await rateDecision(rateParts[1]!, rating);
+    return void await send(chat, ok ? "Оценка решения #" + rateParts[1] + ": " + rating + ". Статистика обновлена." : "Решение не найдено или журнал недоступен.");
+  }
   if (cmd === "/projects") {
     const list = await projects();
     return void await send(chat, list.length ? list.map(p => p.id + " — " + p.path + (p.description ? " (" + p.description + ")" : "")).join("\n") : "Нет доступных проектов. Создай " + projectsFile() + ' с массивом [{"id":"app","path":"/absolute/path"}].');
