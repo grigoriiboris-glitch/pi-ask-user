@@ -79,9 +79,10 @@ async function runNext(db: DatabaseSync, chat: number): Promise<void> {
   proc.stdout?.on("data", collect); proc.stderr?.on("data", collect);
   const finish = async (code: number, failed = false) => {
     if (settled) return; settled = true;
-    const status = failed || code !== 0 ? "failed" : "completed";
+    const current = db.prepare("SELECT status FROM tasks WHERE id=?").get(t.id) as any;
+    const status = current?.status === "cancelled" ? "cancelled" : failed || code !== 0 ? "failed" : "completed";
     update(db, t.id, status, output, code);
-    await send(chat, (status === "completed" ? "✅" : "❌") + " Задача #" + t.id + ": " + status + " (exit " + code + ")\n\n" + (output || "(нет текстового вывода)"));
+    await send(chat, (status === "completed" ? "✅" : status === "cancelled" ? "⏹" : "❌") + " Задача #" + t.id + ": " + status + " (exit " + code + ")\n\n" + (output || "(нет текстового вывода)"));
     child = undefined; activeId = undefined; void runNext(db, chat);
   };
   proc.once("error", async e => { output += "\n" + e.message; await finish(-1, true); });
@@ -134,12 +135,12 @@ export function startTelegramAgentControl(): void {
   const chat = Number(process.env.PI_ASK_USER_CONTROL_CHAT_ID);
   const allowedText = process.env.PI_ASK_USER_CONTROL_USER_ID?.trim();
   const allowedUser = allowedText ? Number(allowedText) : undefined;
-  if (!Number.isSafeInteger(chat) || (allowedText && !Number.isSafeInteger(allowedUser))) return;
+  if (!Number.isSafeInteger(chat) || !allowedText || !Number.isSafeInteger(allowedUser)) return;
   started = true;
   void (async () => {
     await mkdir(root(), { recursive: true, mode: 0o700 });
     const db = dbOpen();
-    db.prepare("UPDATE tasks SET status='queued',updated_at=? WHERE status='running'").run(now());
+    db.prepare("UPDATE tasks SET status='failed',output='Pi exited or restarted before the task result was saved; inspect the project before retrying.',updated_at=? WHERE status='running'").run(now());
     let offset = Number((db.prepare("SELECT value FROM settings WHERE key='telegram_offset'").get() as any)?.value ?? 0);
     while (true) {
       try {
