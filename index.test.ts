@@ -227,6 +227,10 @@ async function setupTool(): Promise<RegisteredTool> {
    let registeredTool: RegisteredTool | undefined;
    emittedEvents = [];
    const pi = {
+      registerCommand() {
+         // Commands are registered by the extension; tests that exercise commands
+         // can capture the handler separately. Most tool tests only need this stub.
+      },
       registerTool(tool: RegisteredTool) {
          registeredTool = tool;
       },
