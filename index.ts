@@ -40,6 +40,7 @@ import {
    wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import { renderSingleSelectRows, type QuestionOption } from "./single-select-layout";
+import { recordActual, recordDecision, readDecisionHistory, rateDecision, type DecisionRating } from "./decision-history";
 
 import { createRequire } from "node:module";
 const _require = createRequire(import.meta.url);
@@ -2718,8 +2719,12 @@ async function executeBatch(
       const suggestions = await Promise.all(questions.map((item) =>
          requestDecision(item.question, item.context, item.options, item.allowMultiple, item.allowFreeform, settings.allowComment, signal),
       ));
+      const historyIds = await Promise.all(suggestions.map((suggestion, index) => suggestion
+         ? recordDecision({ mode: decisionMode, model: process.env.PI_DECISION_MODEL?.trim() || "unknown", question: questions[index]!.question, context: questions[index]!.context, options: questions[index]!.options.map((option) => option.title), suggestion: formatResponseSummary(suggestion.response), confidence: suggestion.confidence, reason: suggestion.reason })
+         : Promise.resolve(null)));
       if (decisionMode === "auto" && suggestions.every((item) => item && item.confidence >= getDecisionThreshold())) {
          const answers: BatchAnswer[] = suggestions.map((item) => ({ status: "answered", response: item!.response }));
+         await Promise.all(historyIds.map((id, index) => id ? recordActual(id, formatResponseSummary(answers[index]!.response)) : Promise.resolve()));
          questions.forEach((item, index) => events.answered(
             { question: item.question, context: item.context, options: item.options },
             answers[index]!.status === "answered" ? answers[index]!.response : { kind: "freeform", text: "" },
@@ -2947,15 +2952,38 @@ export default function(pi: ExtensionAPI) {
    const modelOnly: Record<string, unknown> = { exposure: "model-only" };
 
    pi.registerCommand("decision", {
-      description: "Configure ask_user decision mode: auto, ask, off, status",
+      description: "Configure decision mode, history, ratings, and stats",
       handler: async (args, ctx) => {
-         const value = args.trim().toLowerCase();
+         const [subcommand, ...rest] = args.trim().split(/\s+/);
+         const value = (subcommand ?? "status").toLowerCase();
+         if (value === "history" || value === "review") {
+            const records = await readDecisionHistory();
+            const shown = (value === "review" ? records.filter((r) => !r.rating) : records).slice(0, 10);
+            if (!shown.length) { ctx.ui.notify(value === "review" ? "No unrated decisions." : "Decision history is empty.", "info"); return; }
+            ctx.ui.notify(shown.map((r) => "[" + r.id + "] " + r.mode.toUpperCase() + " " + Math.round(r.confidence * 100) + "% — " + r.question + "\n  AI: " + r.suggestion + (r.actual ? "\n  Actual: " + r.actual : "") + " | rating: " + (r.rating ?? "unrated")).join("\n\n"), "info");
+            return;
+         }
+         if (value === "rate") {
+            const [id, ratingText] = rest;
+            const rating = ratingText?.toLowerCase() as DecisionRating | undefined;
+            if (!id || !rating || !["correct", "incorrect", "unsure"].includes(rating)) { ctx.ui.notify("Usage: /decision rate <id> correct|incorrect|unsure", "warning"); return; }
+            ctx.ui.notify(await rateDecision(id, rating) ? "Decision " + id + " rated: " + rating : "Decision ID not found or history is not writable.", "info");
+            return;
+         }
+         if (value === "stats") {
+            const records = await readDecisionHistory();
+            const rated = records.filter((r) => r.rating === "correct" || r.rating === "incorrect");
+            const correct = rated.filter((r) => r.rating === "correct").length;
+            const byMode = (mode: DecisionMode) => { const group = rated.filter((r) => r.mode === mode); const good = group.filter((r) => r.rating === "correct").length; return group.length ? Math.round(good / group.length * 100) + "%" : "n/a"; };
+            ctx.ui.notify("Decision history: " + records.length + " total; " + rated.length + " rated; " + (rated.length ? Math.round(correct / rated.length * 100) + "%" : "n/a") + " accuracy (excluding unsure/unrated).\nask: " + byMode("ask") + "; auto: " + byMode("auto") + "; unrated: " + records.filter((r) => !r.rating).length + "; unsure: " + records.filter((r) => r.rating === "unsure").length, "info");
+            return;
+         }
          if (value === "status" || !value) {
             ctx.ui.notify("ask_user decision mode: " + getDecisionMode() + "; threshold: " + getDecisionThreshold().toFixed(2) + "; model: " + (process.env.PI_DECISION_MODEL ? "configured" : "not configured"), "info");
             return;
          }
          if (value !== "auto" && value !== "ask" && value !== "off") {
-            ctx.ui.notify("Usage: /decision auto|ask|off|status. Persist mode with PI_ASK_USER_DECISION_MODE.", "warning");
+            ctx.ui.notify("Usage: /decision auto|ask|off|status|history|review|stats|rate <id> correct|incorrect|unsure. Persist mode with PI_ASK_USER_DECISION_MODE.", "warning");
             return;
          }
          runtimeDecisionMode = value as DecisionMode;
@@ -3111,10 +3139,13 @@ export default function(pi: ExtensionAPI) {
 
 
          const decisionMode = getDecisionMode();
+         let decisionHistoryId: string | null = null;
          if (decisionMode !== "off") {
             const suggestion = await requestDecision(question, normalizedContext, options, allowMultiple, allowFreeform, allowComment, signal);
+            if (suggestion) decisionHistoryId = await recordDecision({ mode: decisionMode, model: process.env.PI_DECISION_MODEL?.trim() || "unknown", question, context: normalizedContext, options: options.map((option) => option.title), suggestion: formatResponseSummary(suggestion.response), confidence: suggestion.confidence, reason: suggestion.reason });
             if (decisionMode === "auto" && suggestion && suggestion.confidence >= getDecisionThreshold()) {
                const response = suggestion.response;
+               if (decisionHistoryId) await recordActual(decisionHistoryId, formatResponseSummary(response));
                events.answered(subject, response);
                return {
                   content: [{ type: "text", text: "Decision model answered: " + formatResponseSummary(response) + " (confidence " + suggestion.confidence.toFixed(2) + "). Reason: " + (suggestion.reason || "not provided") }],
