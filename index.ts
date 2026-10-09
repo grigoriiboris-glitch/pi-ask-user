@@ -2830,12 +2830,12 @@ async function executeBatch(
    // Skipped questions emit nothing; each answered one emits its usual event.
    await Promise.all(historyIds.map((id, index) => {
       const answer = finalAnswers[index];
-      return id && answer?.status === "answered"
+      return id && answer?.status === "answered" && !preAnswered[index]
          ? recordActual(id, formatResponseSummary(answer.response))
          : Promise.resolve();
    }));
    finalAnswers.forEach((answer, index) => {
-      if (answer.status === "answered" && !preAnswered[index]) {
+      if (answer.status === "answered") {
          events.answered(subjects[index]!, answer.response, { index, total: subjects.length });
       }
    });
