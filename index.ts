@@ -2996,7 +2996,7 @@ export default function(pi: ExtensionAPI) {
          if (value === "toggle") {
             runtimeDecisionMode = getDecisionMode() === "auto" ? "off" : "auto";
             const enabled = runtimeDecisionMode === "auto";
-            ctx.ui.setStatus("ask-user-auto-answer", enabled ? "AI auto-answer: ON (Ctrl+Shift+A)" : "AI auto-answer: OFF (Ctrl+Shift+A)");
+            ctx.ui.setStatus?.("ask-user-auto-answer", enabled ? "AI auto-answer: ON" : "AI auto-answer: OFF");
             ctx.ui.notify(enabled ? "AI auto-answer enabled. Press Ctrl+Shift+A or run /decision toggle to answer manually again." : "AI auto-answer disabled. Questions will wait for your answer.", "info");
             return;
          }
@@ -3009,20 +3009,11 @@ export default function(pi: ExtensionAPI) {
             return;
          }
          runtimeDecisionMode = value as DecisionMode;
-         ctx.ui.setStatus("ask-user-auto-answer", value === "auto" ? "AI auto-answer: ON (Ctrl+Shift+A)" : "AI auto-answer: OFF (Ctrl+Shift+A)");
+         ctx.ui.setStatus?.("ask-user-auto-answer", value === "auto" ? "AI auto-answer: ON" : "AI auto-answer: OFF");
          ctx.ui.notify("ask_user decision mode set to " + value + " for this Pi session.", "info");
       },
    });
 
-   pi.registerShortcut("ctrl+shift+a", {
-      description: "Toggle AI auto-answer for ask_user",
-      handler: async (ctx) => {
-         runtimeDecisionMode = getDecisionMode() === "auto" ? "off" : "auto";
-         const enabled = runtimeDecisionMode === "auto";
-         ctx.ui.setStatus("ask-user-auto-answer", enabled ? "AI auto-answer: ON (Ctrl+Shift+A)" : "AI auto-answer: OFF (Ctrl+Shift+A)");
-         ctx.ui.notify(enabled ? "AI auto-answer enabled. Press Ctrl+Shift+A again to answer manually." : "AI auto-answer disabled. Questions will wait for your answer.", "info");
-      },
-   });
 
    pi.registerTool({
       ...modelOnly,
