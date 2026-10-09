@@ -308,3 +308,18 @@ The default mode is `off`. The decision endpoint must accept an OpenAI-compatibl
 
 Commands change the mode for the current Pi process only. Use `PI_ASK_USER_DECISION_MODE` for the startup default. If the provider is unavailable, returns invalid JSON, proposes invalid choices, returns `NEEDS_HUMAN`, or falls below the threshold, the normal manual prompt is shown. Requests time out after 10 seconds. Multi-select answers are checked against exact option titles and the `allowMultiple` setting; freeform answers are accepted only when `allowFreeform` is enabled. The model receives only the current question(s), supplied context, available options, and short fixed constraints—not the full Pi conversation.
 
+
+
+### Decision history and accuracy review (fork feature)
+
+Decision suggestions are stored locally in an append-only JSONL journal at \`~/.pi/agent/ask-user-decisions.jsonl\`. Override the path with \`PI_ASK_USER_DECISION_HISTORY\`. The journal records the question, supplied context/options, model name, suggestion, confidence, reason, mode, and (when available) the final answer. API keys are never recorded. The history file may contain task context, so keep it private.
+
+Commands:
+- \`/decision history\` — show the latest 10 recorded suggestions.
+- \`/decision review\` — show up to 10 suggestions without a rating.
+- \`/decision rate <id> correct\` — rate a suggestion as correct.
+- \`/decision rate <id> incorrect\` — rate it as incorrect.
+- \`/decision rate <id> unsure\` — mark it uncertain and exclude it from accuracy.
+- \`/decision stats\` — show overall and \`ask\`/\`auto\` accuracy for explicitly rated correct/incorrect decisions.
+
+Ratings are human assessments, not proof of objective correctness. Unrated and \`unsure\` decisions are excluded from accuracy. History-write failures do not interrupt asking the user.
