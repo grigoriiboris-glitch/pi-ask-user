@@ -2713,6 +2713,29 @@ async function executeBatch(
       cancelled,
    });
 
+   const decisionMode = getDecisionMode();
+   if (decisionMode !== "off") {
+      const suggestions = await Promise.all(questions.map((item) =>
+         requestDecision(item.question, item.context, item.options, item.allowMultiple, item.allowFreeform, settings.allowComment, signal),
+      ));
+      if (decisionMode === "auto" && suggestions.every((item) => item && item.confidence >= getDecisionThreshold())) {
+         const answers: BatchAnswer[] = suggestions.map((item) => ({ status: "answered", response: item!.response }));
+         questions.forEach((item, index) => events.answered(
+            { question: item.question, context: item.context, options: item.options },
+            answers[index]!.status === "answered" ? answers[index]!.response : { kind: "freeform", text: "" },
+         ));
+         return {
+            content: [{ type: "text", text: "Decision model answered batch (" + suggestions.length + " questions)." }],
+            details: details(answers, false),
+         };
+      }
+      if (decisionMode === "ask" && ctx.ui) {
+         const proposed = suggestions.map((item, index) => item ? (index + 1) + ". " + formatResponseSummary(item.response) + " (" + Math.round(item.confidence * 100) + "%)" : "");
+         const message = proposed.filter(Boolean).join("; ");
+         if (message) ctx.ui.notify("Decision suggestions: " + message, "info");
+      }
+   }
+
    if (!ctx.hasUI || !ctx.ui) {
       throw new Error(formatBatchForMessage(questions, settings.allowComment));
    }
@@ -2819,7 +2842,7 @@ function formatBatchResult(theme: Theme, details: AskBatchDetails, expanded: boo
 
 
 type DecisionMode = "off" | "ask" | "auto";
-type DecisionSuggestion = { option: string; confidence: number; reason: string };
+type DecisionSuggestion = { response: AskResponse; confidence: number; reason: string };
 
 let runtimeDecisionMode: DecisionMode | undefined;
 
@@ -2838,12 +2861,15 @@ async function requestDecision(
    question: string,
    context: string | undefined,
    options: QuestionOption[],
+   allowMultiple: boolean,
+   allowFreeform: boolean,
+   allowComment: boolean,
    signal?: AbortSignal,
 ): Promise<DecisionSuggestion | null> {
    const endpoint = process.env.PI_DECISION_API_URL?.trim();
    const apiKey = process.env.PI_DECISION_API_KEY?.trim();
    const model = process.env.PI_DECISION_MODEL?.trim();
-   if (!endpoint || !apiKey || !model || options.length < 2) return null;
+   if (!endpoint || !apiKey || !model) return null;
 
    const controller = new AbortController();
    const timeout = setTimeout(() => controller.abort(), 10000);
@@ -2856,14 +2882,14 @@ async function requestDecision(
          body: JSON.stringify({
             model,
             temperature: 0,
-            max_tokens: 300,
+            max_tokens: 500,
             response_format: { type: "json_object" },
             messages: [
-               { role: "system", content: "You are a decision-only assistant for a coding agent. Choose exactly one offered option based on the question, context, task requirements, and minimal-change principle. Never invent an option. If no option is safe or supported, return option NEEDS_HUMAN with confidence 0. Return JSON only with keys option (exact offered title or NEEDS_HUMAN), confidence (0 to 1), and reason (short string)." },
+               { role: "system", content: "You are a decision-only assistant for a coding agent. Answer the given ask_user question using only its allowed response format. For choices, use exact offered titles; never invent titles. If uncertain or unsupported, use kind NEEDS_HUMAN. For multi-select choose one or more titles, respecting the question. For freeform, provide concise text only when allowed. Return JSON with kind (selection, freeform, or NEEDS_HUMAN), selections (array of exact titles for selection), text (for freeform), optional comment, confidence (0 to 1), and reason." },
                { role: "user", content: JSON.stringify({
-                  question,
-                  context: context ?? "",
-                  constraints: ["Follow the task specification", "Preserve existing architecture", "Prefer minimal changes", "Avoid over-engineering"],
+                  question, context: context ?? "",
+                  allowMultiple, allowFreeform, allowComment,
+                  constraints: ["Follow task requirements", "Preserve existing architecture", "Prefer minimal changes", "Avoid over-engineering"],
                   options: options.map((option) => ({ title: option.title, description: option.description ?? "" })),
                }) },
             ],
@@ -2874,14 +2900,27 @@ async function requestDecision(
       const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
       const content = payload.choices?.[0]?.message?.content;
       if (typeof content !== "string") return null;
-      const parsed = JSON.parse(content) as Partial<DecisionSuggestion>;
-      if (typeof parsed.option !== "string" || typeof parsed.confidence !== "number" || !Number.isFinite(parsed.confidence)) return null;
-      if (parsed.option !== "NEEDS_HUMAN" && !options.some((option) => option.title === parsed.option)) return null;
-      return {
-         option: parsed.option,
-         confidence: Math.max(0, Math.min(1, parsed.confidence)),
-         reason: typeof parsed.reason === "string" ? parsed.reason.slice(0, 500) : "",
+      const parsed = JSON.parse(content) as {
+         kind?: unknown; selections?: unknown; text?: unknown; comment?: unknown;
+         confidence?: unknown; reason?: unknown;
       };
+      if (typeof parsed.confidence !== "number" || !Number.isFinite(parsed.confidence)) return null;
+      const confidence = Math.max(0, Math.min(1, parsed.confidence));
+      const reason = typeof parsed.reason === "string" ? parsed.reason.slice(0, 500) : "";
+      if (parsed.kind === "NEEDS_HUMAN") return { response: { kind: "freeform", text: "" }, confidence: 0, reason };
+      let answer: AskResponse | null = null;
+      if (parsed.kind === "selection" && options.length > 0 && Array.isArray(parsed.selections)
+         && parsed.selections.every((x): x is string => typeof x === "string")) {
+         const selections = [...new Set(parsed.selections)];
+         const validTitles = new Set(options.map((option) => option.title));
+         if (selections.length > 0 && selections.every((title) => validTitles.has(title))
+            && (allowMultiple || selections.length === 1)) {
+            answer = createSelectionResponse(selections, allowComment && typeof parsed.comment === "string" ? parsed.comment : undefined);
+         }
+      } else if (parsed.kind === "freeform" && allowFreeform && typeof parsed.text === "string") {
+         answer = createFreeformResponse(parsed.text);
+      }
+      return answer ? { response: answer, confidence, reason } : null;
    } catch {
       return null;
    } finally {
@@ -3072,19 +3111,18 @@ export default function(pi: ExtensionAPI) {
 
 
          const decisionMode = getDecisionMode();
-         if (decisionMode !== "off" && options.length > 1 && !allowMultiple && !allowComment) {
-            const suggestion = await requestDecision(question, normalizedContext, options, signal);
-            const selected = suggestion && options.find((option) => option.title === suggestion.option);
-            if (decisionMode === "auto" && selected && suggestion.confidence >= getDecisionThreshold()) {
-               const response: AskResponse = { kind: "selection", selections: [selected.title] };
+         if (decisionMode !== "off") {
+            const suggestion = await requestDecision(question, normalizedContext, options, allowMultiple, allowFreeform, allowComment, signal);
+            if (decisionMode === "auto" && suggestion && suggestion.confidence >= getDecisionThreshold()) {
+               const response = suggestion.response;
                events.answered(subject, response);
                return {
-                  content: [{ type: "text", text: "Decision model selected: " + selected.title + " (confidence " + suggestion.confidence.toFixed(2) + "). Reason: " + (suggestion.reason || "not provided") }],
+                  content: [{ type: "text", text: "Decision model answered: " + formatResponseSummary(response) + " (confidence " + suggestion.confidence.toFixed(2) + "). Reason: " + (suggestion.reason || "not provided") }],
                   details: { question, context: normalizedContext, options, response, cancelled: false } as AskToolDetails,
                };
             }
-            if (decisionMode === "ask" && suggestion && suggestion.option !== "NEEDS_HUMAN") {
-               ctx.ui.notify("Decision suggestion: " + suggestion.option + " (" + Math.round(suggestion.confidence * 100) + "%). " + suggestion.reason, "info");
+            if (decisionMode === "ask" && suggestion && ctx.ui) {
+               ctx.ui.notify("Decision suggestion: " + formatResponseSummary(suggestion.response) + " (" + Math.round(suggestion.confidence * 100) + "%). " + suggestion.reason, "info");
             }
          }
 
