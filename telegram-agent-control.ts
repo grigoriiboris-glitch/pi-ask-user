@@ -68,7 +68,7 @@ async function listSkills(projectPath: string): Promise<string[]> {
         try {
           const file = await realpath(join(dir, entries.find(e => e.isFile() && e.name.toLowerCase() === "skill.md")!.name));
           if (file.startsWith(baseReal + "/")) {
-            const name = dir.split(/[\\\\/]/).pop() || "";
+            const name = dir.split(/[\\/]/).pop() || "";
             if (name) found.add(name);
           }
         } catch {}
@@ -222,7 +222,7 @@ async function textCommand(db: DatabaseSync, chat: number, text: string): Promis
     const project = (await projects()).find(p => p.id === active);
     if (!project) return void await send(chat, "Сначала выбери проект командой /new <проект>.");
     const names = await listSkills(project.path);
-    return void await send(chat, names.length ? "Доступные навыки для " + project.id + ":\\n" + names.map(name => "• " + name).join("\\n") + "\\n\\nЗапуск: /skill <имя> [задача]" : "Навыки не найдены в стандартных каталогах проекта или ~/.pi/agent/skills.");
+    return void await send(chat, names.length ? "Доступные навыки для " + project.id + ":\n" + names.map(name => "• " + name).join("\n") + "\n\nЗапуск: /skill <имя> [задача]" : "Навыки не найдены в стандартных каталогах проекта или ~/.pi/agent/skills.");
   }
   if (cmd === "/tasks") {
     const rows = db.prepare("SELECT id,project,profile,status,prompt FROM tasks ORDER BY created_at DESC LIMIT 10").all() as any[];
